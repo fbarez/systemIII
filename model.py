@@ -74,7 +74,6 @@ from torch.nn import init
 class CnnActorCriticNetwork(nn.Module):
     def __init__(self, input_size, hidden_size1, hidden_size2, output_size, use_noisy_net=False):
         super(CnnActorCriticNetwork, self).__init__()
-
         if use_noisy_net:
             print('use NoisyNet')
             linear = NoisyLinear
@@ -84,7 +83,7 @@ class CnnActorCriticNetwork(nn.Module):
         self.feature = nn.Sequential(
             nn.Linear(input_size, hidden_size1),
             nn.ReLU(),
-            nn.linear(hidden_size1, hidden_size2),
+            nn.Linear(hidden_size1, hidden_size2),
             nn.ReLU(),
             nn.Linear(hidden_size2, output_size) #output size must equal input size
         )
@@ -139,11 +138,11 @@ class ICMModel(nn.Module):
         self.output_size = output_size
         self.device = torch.device('cuda' if use_cuda else 'cpu')
 
-        feature_output = len(input_size)
+        # feature_output = len(input_size)
         self.feature = nn.Sequential(
-            nn.linear(input_size, hidden_size1),
+            nn.Linear(input_size, hidden_size1),
             nn.ReLU(),
-            nn.linear(hidden_size1, hidden_size2),
+            nn.Linear(hidden_size1, hidden_size2),
             nn.ReLU(),
             nn.Linear(hidden_size2, output_size)
          ) #output size must equal input size
