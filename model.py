@@ -133,9 +133,10 @@ class CnnActorCriticNetwork(nn.Module):
 class ICMModel(nn.Module):
     def __init__(self, input_size, hidden_size1, hidden_size2, output_size, use_cuda=True):
         super(ICMModel, self).__init__()
-
+        
         self.input_size = input_size
         self.output_size = output_size
+
         self.device = torch.device('cuda' if use_cuda else 'cpu')
 
         # feature_output = len(input_size)
@@ -146,20 +147,21 @@ class ICMModel(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size2, output_size)
          ) #output size must equal input size
-
+        encode_state = input_size
+        encode_next_state = input_size
         self.inverse_net = nn.Sequential(
-            nn.Linear(phi1 + phi2, hidden_size1),
+            nn.Linear(encode_state + encode_next_state, hidden_size1),
             nn.ReLU(),
             nn.Linear(hidden_size1, output_size)
         )
 
 
         self.forward_net = nn.Sequential(
-            nn.Linear(phi1 + output_size, hidden_size1),
+            nn.Linear(encode_state + output_size, hidden_size1),
             nn.LeakyReLU(),
             nn.Linear(hidden_size1, hidden_size2),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size2, phi_hat_2)
+            nn.Linear(hidden_size2, output_size)
         )
  
 
@@ -174,7 +176,8 @@ class ICMModel(nn.Module):
 
     def forward(self, inputs):
         state, next_state, action = inputs
-
+        #phi1 = encode_state
+        #phi2 = encoded_next_state
         encode_state = self.feature(state)
         encode_next_state = self.feature(next_state)
         # get pred action
