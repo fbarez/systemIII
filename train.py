@@ -10,71 +10,71 @@ import numpy as np
 import copy
 
 
-def main():
-    print({section: dict(config[section]) for section in config.sections()})
-    train_method = default_config['TrainMethod']
-    env_id = default_config['EnvID']
-    env_type = default_config['EnvType']
+# def main():
+#     print({section: dict(config[section]) for section in config.sections()})
+#     train_method = default_config['TrainMethod']
+#     env_id = default_config['EnvID']
+#     env_type = default_config['EnvType']
 
-    if env_type == 'mario':
-        env = BinarySpaceToDiscreteSpaceEnv(gym_super_mario_bros.make(env_id), COMPLEX_MOVEMENT)
-    elif env_type == 'atari':
-        env = gym.make(env_id)
-    else:
-        raise NotImplementedError
-    # Assert the observation is only one dimenstion
-    assert len(env.observation_space.shape)==1 
-    input_size = env.observation_space.shape[0]  # 4
-    output_size = env.action_space.n  # 2
+#     if env_type == 'mario':
+#         env = BinarySpaceToDiscreteSpaceEnv(gym_super_mario_bros.make(env_id), COMPLEX_MOVEMENT)
+#     elif env_type == 'atari':
+#         env = gym.make(env_id)
+#     else:
+#         raise NotImplementedError
+#     # Assert the observation is only one dimenstion
+#     assert len(env.observation_space.shape)==1 
+#     input_size = env.observation_space.shape[0]  # 4
+#     output_size = env.action_space.n  # 2
 
-    if 'Breakout' in env_id:
-        output_size -= 1
+#     if 'Breakout' in env_id:
+#         output_size -= 1
 
-    env.close()
+#     env.close()
 
-    is_load_model = False
-    is_render = False
-    model_path = 'models/{}.model'.format(env_id)
-    icm_path = 'models/{}.icm'.format(env_id)
+#     is_load_model = False
+#     is_render = False
+#     model_path = 'models/{}.model'.format(env_id)
+#     icm_path = 'models/{}.icm'.format(env_id)
 
-    writer = SummaryWriter()
+#     writer = SummaryWriter()
 
-    use_cuda = default_config.getboolean('UseGPU')
-    use_gae = default_config.getboolean('UseGAE')
-    use_noisy_net = default_config.getboolean('UseNoisyNet')
+#     use_cuda = default_config.getboolean('UseGPU')
+#     use_gae = default_config.getboolean('UseGAE')
+#     use_noisy_net = default_config.getboolean('UseNoisyNet')
 
-    lam = float(default_config['Lambda'])
-    num_worker = int(default_config['NumEnv'])
+#     lam = float(default_config['Lambda'])
+#     num_worker = int(default_config['NumEnv'])
 
-    num_step = int(default_config['NumStep'])
+#     num_step = int(default_config['NumStep'])
 
-    ppo_eps = float(default_config['PPOEps'])
-    epoch = int(default_config['Epoch'])
-    mini_batch = int(default_config['MiniBatch'])
-    batch_size = int(num_step * num_worker / mini_batch)
-    learning_rate = float(default_config['LearningRate'])
-    entropy_coef = float(default_config['Entropy'])
-    gamma = float(default_config['Gamma'])
-    eta = float(default_config['ETA'])
+#     ppo_eps = float(default_config['PPOEps'])
+#     epoch = int(default_config['Epoch'])
+#     mini_batch = int(default_config['MiniBatch'])
+#     batch_size = int(num_step * num_worker / mini_batch)
+#     learning_rate = float(default_config['LearningRate'])
+#     entropy_coef = float(default_config['Entropy'])
+#     gamma = float(default_config['Gamma'])
+#     eta = float(default_config['ETA'])
 
-    clip_grad_norm = float(default_config['ClipGradNorm'])
+#     clip_grad_norm = float(default_config['ClipGradNorm'])
 
-    reward_rms = RunningMeanStd()
-    obs_rms = RunningMeanStd(shape=(1, 4, 84, 84))
+#     reward_rms = RunningMeanStd()
+#     obs_rms = RunningMeanStd(shape=(1, 4, 84, 84))
 
-    pre_obs_norm_step = int(default_config['ObsNormStep'])
-    discounted_reward = RewardForwardFilter(gamma)
+#     pre_obs_norm_step = int(default_config['ObsNormStep'])
+#     discounted_reward = RewardForwardFilter(gamma)
 
-    agent = ICMAgent
+#     agent = ICMAgent
 
-    if default_config['EnvType'] == 'atari':
-        env_type = AtariEnvironment
-    elif default_config['EnvType'] == 'mario':
-        env_type = MarioEnvironment
-    else:
-        raise NotImplementedError
-    # hidden_size1=265
-    # hidden_size2=64
+#     if default_config['EnvType'] == 'atari':
+#         env_type = AtariEnvironment
+#     elif default_config['EnvType'] == 'mario':
+#         env_type = MarioEnvironment
+#     else:
+#         raise NotImplementedError
+#     # hidden_size1=265
+#     # hidden_size2=64
     agent = agent(
         input_size,
         # hidden_size1,
@@ -198,7 +198,8 @@ def main():
                 sample_rall = 0
                 sample_step = 0
                 sample_i_rall = 0
-
+        #compute constraint reward --- this needs more thinking!
+        constraint_reward = agent.evaluated_constraint_reward(next_states)  
         # calculate last next value
         _, value, _ = agent.get_action((states - obs_rms.mean) / np.sqrt(obs_rms.var))
         total_values.append(value)
@@ -251,6 +252,12 @@ def main():
             torch.save(agent.model.state_dict(), model_path)
             torch.save(agent.icm.state_dict(), icm_path)
 
+        #plot results -- adobt
+        print('episode', i, 'score %.1f' % score, 'avg score %.1f' % avg_score,
+        'time_steps', n_steps, 'learning_steps', learn_iters)
+    x = [i+1 for i in range(len(score_history))]
+    plot_learning_curve(x, score_history, figure_file)
+
 
 if __name__ == '__main__':
-    main()
+    main_ppo()

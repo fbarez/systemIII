@@ -83,6 +83,14 @@ class ICMAgent(object):
             [state, next_state, action_onehot])
         intrinsic_reward = self.eta * F.mse_loss(real_next_state_feature, pred_next_state_feature, reduction='none').mean(-1)
         return intrinsic_reward.data.cpu().numpy()
+    def evaluated_constraint_reward(self, next_state, constarints):
+        #if agent takes action it will find itself in next_state, will the constraints be satisfied?
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        #we need to have access to object distance and velocity etc in here...
+        constraint_reward = self.constarints
+        #TODO ----> FAZL
+
+        return constraint_reward.data.cpu().numpy()
 
     def train_model(self, s_batch, next_s_batch, target_batch, y_batch, adv_batch, old_policy):
         s_batch = torch.FloatTensor(s_batch).to(self.device)
