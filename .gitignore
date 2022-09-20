@@ -4,5 +4,5 @@ __pycache__
 
 .DS_Store
 
-./MUJOCO_LOG.TXT
-./safety_gym
+MUJOCO_LOG.TXT
+safety_gym
