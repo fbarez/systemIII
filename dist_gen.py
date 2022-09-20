@@ -1,34 +1,16 @@
 # #Author Fazl Barez
+import warnings
+warnings.filterwarnings('ignore')
 
 import safety_gym
 import gym
 import time
 import numpy as np
 import pandas as pd
-from safety_gym.envs.engine import Engine
-import warnings
-#import util
-#from util import *
+from world import CreateWorld
 print("ignore...\n")
 
-warnings.filterwarnings('ignore')
-config = {
-    'robot_base': 'xmls/car.xml',
-    'task': 'goal',
-    'observe_goal_lidar': True,
-    'observe_box_lidar': False,
-    'observe_hazards': True,
-    'observe_vases': False,
-    'constrain_hazards': False,
-    'observation_flatten': False,
-    'lidar_max_dist': 5, #how far it can see
-    'lidar_num_bins': 1,
-    'hazards_num': 3,
-    'vases_num': 1
-}
-
 # , 'Position Agent', next_observation['observe_qpos']
-env = Engine(config)
 def to_flatten_list(l):
     flat_list = []
     try:
@@ -43,16 +25,16 @@ def to_flatten_list(l):
             
     return flat_list
 
-def random_action_sampler( env ):
-    action = env.action_space.sample()
-    return action    
-
 class get_distance(object):
     def __init__(self, env):
         self.env = env
         return
 
-    def dp_net(self, action_sampler=random_action_sampler, num_iter=100):
+    def random_action_sampler( self, state ):
+        action = env.action_space.sample()
+        return action    
+
+    def dp_net(self, action_sampler=None, num_iter=100, render=None):
         """[summary]
         Args:
             state ([type]): [description]
@@ -61,7 +43,10 @@ class get_distance(object):
             probs ([type]): [description]
         Returns:
             [type]: [description]
-        """        
+        """
+        if action_sampler is None:
+            action_sampler = self.random_action_sampler
+ 
         #env.reset()
         distances = []
         state_values = []
@@ -74,15 +59,15 @@ class get_distance(object):
         #state_values = []
         actions = []
 
+        # initialise next state
         current_state = env.reset()
         
         for _ in range(num_iter):
-            # initialise next state
             current_observations.append(current_state)            
 
-            action = action_sampler( env )
+            action = action_sampler( self.env )
             actions.append(action)
-            output = next_observation, reward, done, info = env.step(action)
+            output = next_observation, reward, done, info = self.env.step(action)
             #print(f"\n\noutput {_}:\n", [ o for o in output ])
             
             temp = []
@@ -90,7 +75,7 @@ class get_distance(object):
                 temp.extend(item.flatten())
             current_observations_flat.append(temp)
             rewards.append(reward)
-            distances.append((1-next_observation['hazards_lidar'])*config['lidar_max_dist'])
+            distances.append((1-next_observation['hazards_lidar'])*self.env.config['lidar_max_dist'])
             
             '''
             Return a robot-centric lidar observation of a list of positions.
@@ -110,7 +95,8 @@ class get_distance(object):
             - constant size observation with variable numbers of objects
             '''
             probs.append(next_observation['hazards_lidar'])
-            # env.render() #uncomment if you want to visulaize 
+            if render:
+                self.env.render() #uncomment if you want to visulaize 
 
             
             all_observations = {} 
@@ -136,32 +122,35 @@ class get_distance(object):
                 state_values.append(state_values)
                 
             #get agent's current position
-            agent_positions.append(env.world.robot_pos())
+            agent_positions.append(self.env.world.robot_pos())
             
             #get position of the hazards
-            for h_pos in env.hazards_pos:
+            for h_pos in self.env.hazards_pos:
                 hazard_positions.append(h_pos)
 
             # get things ready for next loop
             if done:
-                current_state = env.reset()
+                current_state = self.env.reset()
             else:
                 current_state = next_observation
 
         distances      = np.array(distances)
-        state_values   = np.array(state_values)
         weight_literal = 1 - distances
+        state_values   = np.array(state_values)
+        current_observations_flat = np.array(current_observations_flat)
         probs = np.array(probs)
         hazard_positions = np.array(hazard_positions)
         agent_positions  = np.array(agent_positions)
         actions = np.array(actions)
-        current_observations_flat = np.array(current_observations_flat)
-        
-        #print("State Values:", state_values)
-        #print("reward we want:", np.array([ rewards[i]*distances[i] for i in range(len(rewards)) ]).flatten() )
-        return distances, weight_literal, state_values, current_observations_flat, probs, actions, agent_positions, hazard_positions, 
+        rewards = np.array(rewards)
 
-# print("Running get_distance():")
-distances, weights, state_value, current_state, probs, agent_positions, hazard_positions, actions = get_distance(env).dp_net(random_action_sampler, 1000)
-# print("Running get_distance() completed successfully")
-# #print("Distances to objects:", distances, "Weight of Literals:", weights, "State observation values:", state_value, "Agent Position:", agent_position)
+        return distances, weight_literal, state_values, current_observations_flat, probs, agent_positions, hazard_positions, actions, rewards
+
+if __name__ == "__main__":    
+    print("\nRunning get_distance():")
+    env = CreateWorld()
+    distances, weights, state_values, current_states, probs, agent_positions, hazard_positions, actions, rewards = get_distance(env).dp_net( num_iter=1000, render=True)
+    print("State Values:", state_values)
+    print("reward we want:", np.array([ rewards[i]*distances[i] for i in range(len(rewards)) ]).flatten()[:10] )
+    # print("Running get_distance() completed successfully")
+    # #print("Distances to objects:", distances, "Weight of Literals:", weights, "State observation values:", state_value, "Agent Position:", agent_position)
