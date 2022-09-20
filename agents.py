@@ -7,9 +7,9 @@ import torch.optim as optim
 
 from torch.distributions.categorical import Categorical
 
-from model import CnnActorCriticNetwork, ICMModel
+from model import ActorCriticNetwork, ICMModel
 
-hidden_size1=256
+hidden_size1 = 256
 hidden_size2 = 64
 class ICMAgent(object):
     def __init__(
@@ -30,7 +30,7 @@ class ICMAgent(object):
             use_gae=True,
             use_cuda=False,
             use_noisy_net=False):
-        self.model = CnnActorCriticNetwork(input_size, hidden_size1, hidden_size2, output_size, use_noisy_net)
+        self.model = ActorCriticNetwork(input_size, hidden_size1, hidden_size2, output_size, use_noisy_net)
         self.num_env = num_env
         self.output_size = output_size
         self.input_size = input_size
@@ -83,6 +83,7 @@ class ICMAgent(object):
             [state, next_state, action_onehot])
         intrinsic_reward = self.eta * F.mse_loss(real_next_state_feature, pred_next_state_feature, reduction='none').mean(-1)
         return intrinsic_reward.data.cpu().numpy()
+
     def evaluated_constraint_reward(self, next_state, constarints):
         #if agent takes action it will find itself in next_state, will the constraints be satisfied?
         next_state = torch.FloatTensor(next_state).to(self.device)

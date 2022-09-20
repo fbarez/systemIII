@@ -7,7 +7,7 @@ import gym
 import time
 import numpy as np
 import pandas as pd
-from world import CreateWorld
+from world import CreateWorld, flatten_state
 print("ignore...\n")
 
 # , 'Position Agent', next_observation['observe_qpos']
@@ -70,10 +70,7 @@ class get_distance(object):
             output = next_observation, reward, done, info = self.env.step(action)
             #print(f"\n\noutput {_}:\n", [ o for o in output ])
             
-            temp = []
-            for item in current_state.values():
-                temp.extend(item.flatten())
-            current_observations_flat.append(temp)
+            current_observations_flat.append(flatten_state(current_state))
             rewards.append(reward)
             distances.append((1-next_observation['hazards_lidar'])*self.env.config['lidar_max_dist'])
             

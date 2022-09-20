@@ -1,6 +1,7 @@
 import safety_gym
 import gym
 from safety_gym.envs.engine import Engine
+import numpy as np
 
 config = {
     'robot_base': 'xmls/car.xml',
@@ -18,4 +19,11 @@ config = {
 }
 
 def CreateWorld():
-    return Engine(config)
+    env = Engine(config)
+    return env
+
+def flatten_state( current_state ):
+    temp = []
+    for item in current_state.values():
+        temp.extend(item.flatten())
+    return np.array(temp)
