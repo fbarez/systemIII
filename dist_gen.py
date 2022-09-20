@@ -1,4 +1,4 @@
-#Author Fazl Barez
+# #Author Fazl Barez
 
 import safety_gym
 import gym
@@ -9,7 +9,7 @@ from safety_gym.envs.engine import Engine
 import warnings
 #import util
 #from util import *
-
+print("ignore...\n")
 
 warnings.filterwarnings('ignore')
 config = {
@@ -18,12 +18,12 @@ config = {
     'observe_goal_lidar': True,
     'observe_box_lidar': False,
     'observe_hazards': True,
-    'observe_vases': True,
+    'observe_vases': False,
     'constrain_hazards': False,
     'observation_flatten': False,
     'lidar_max_dist': 5, #how far it can see
     'lidar_num_bins': 1,
-    'hazards_num': 0,
+    'hazards_num': 3,
     'vases_num': 1
 }
 
@@ -42,13 +42,17 @@ def to_flatten_list(l):
         return [l]
             
     return flat_list
-    
+
+def random_action_sampler( env ):
+    action = env.action_space.sample()
+    return action    
+
 class get_distance(object):
-    def __init__(self):
-        
-        #self.obj_type = obj_type
-        return  
-    def dp_net(self, state, weights, state_values, probs):
+    def __init__(self, env):
+        self.env = env
+        return
+
+    def dp_net(self, action_sampler=random_action_sampler, num_iter=100):
         """[summary]
         Args:
             state ([type]): [description]
@@ -61,28 +65,33 @@ class get_distance(object):
         #env.reset()
         distances = []
         state_values = []
-        current_observation = []
-        current_observation_flat = []
-        agent_position = []
-        hazard_position = []
+        current_observations = []
+        current_observations_flat = []
+        rewards = []
+        agent_positions = []
+        hazard_positions = []
         probs = []
         #state_values = []
         actions = []
 
-        for _ in range(100):
-            state = env.reset()
-            #print("state:", state) 
-            action = env.action_space.sample()
-            current_observation.append(state)
+        current_state = env.reset()
+        
+        for _ in range(num_iter):
+            # initialise next state
+            current_observations.append(current_state)            
+
+            action = action_sampler( env )
             actions.append(action)
-            next_observation, reward, done, info = env.step(action)
+            output = next_observation, reward, done, info = env.step(action)
+            #print(f"\n\noutput {_}:\n", [ o for o in output ])
+            
             temp = []
-            for item in state.values():
+            for item in current_state.values():
                 temp.extend(item.flatten())
-            current_observation_flat.append(temp)
+            current_observations_flat.append(temp)
+            rewards.append(reward)
             distances.append((1-next_observation['hazards_lidar'])*config['lidar_max_dist'])
-            if done:
-                env.reset()
+            
             '''
             Return a robot-centric lidar observation of a list of positions.
             Lidar is a set of bins around the robot (divided evenly in a circle).
@@ -101,65 +110,58 @@ class get_distance(object):
             - constant size observation with variable numbers of objects
             '''
             probs.append(next_observation['hazards_lidar'])
-            #env.render() #uncomment if you want to visulaize 
+            # env.render() #uncomment if you want to visulaize 
 
-
-        #     all_observations = {} 
-        #    # get the state describtion
-        #     for key in next_observation.keys(): 
-        #         if len(next_observation[key].shape)>1:continue
-        #         #print("KEY:", key)     
-        #         all_observations[key] = next_observation[key] 
-        #     all_observatsions = np.concatenate([all_observations[key] for key in all_observations.keys()]) 
-        #     state_values.append(all_observations)
+            
+            all_observations = {} 
+            # get the state describtion
+            for key in next_observation.keys(): 
+                if len(next_observation[key].shape)>1:continue
+                all_observations[key] = next_observation[key] 
+            all_observations = np.concatenate([all_observations[key] for key in all_observations.keys()]) 
+            state_values.append(all_observations)
                 
             #converting dict into list 
             for element in next_observation.items():
                 for item in element[1]:
-                    # import pdb
-                    # pdb.set_trace()
                     state_values.extend(to_flatten_list(item))
             
-            #print(type(current_observation))
-            # for element in current_observation:
-            #     print(element)
-            
-            #do the sameoperation for the current state 
-            # for element in current_observation:
-            #     #print("ELEMENTS:", element)
-            #     for item in element.values():
-            #         current_observation_flat.append(item.flatten())
-                    #import pdb; pdb.set_trace()
-                #print("Items is:", i[1])
+            #do the same operation for the current state 
+            for element in current_state.values():
+                current_observations_flat.append(item.flatten())
+
             #turn the state description dictionary into a list 
-            # for key, value in next_observation.keys():
-            #     state_values = [key, value]
-            #     state_values.append(state_values)
+            for key, value in next_observation.items():
+                state_values = [key, value]
+                state_values.append(state_values)
                 
             #get agent's current position
-            agent_position.append(env.world.robot_pos())
+            agent_positions.append(env.world.robot_pos())
             
             #get position of the hazards
             for h_pos in env.hazards_pos:
-                hazard_position.append(h_pos)
-            #hazard_position.append(env.world.hazards_pos)
-        #print("Lets debug this"))
-            #for the case Float
-            #all_observations = np.concatenate([next_observation for )
-            #state_values.append(all_observations)
-        #distance = next_observation['hazards_lidar']
-        distances = np.array(distances)
-        state_values = np.array(state_values)
+                hazard_positions.append(h_pos)
+
+            # get things ready for next loop
+            if done:
+                current_state = env.reset()
+            else:
+                current_state = next_observation
+
+        distances      = np.array(distances)
+        state_values   = np.array(state_values)
         weight_literal = 1 - distances
         probs = np.array(probs)
-        hazard_position = np.array(hazard_position)
-        #agent_position = env.world.robot_pos()
-        agent_position = np.array(agent_position)
+        hazard_positions = np.array(hazard_positions)
+        agent_positions  = np.array(agent_positions)
         actions = np.array(actions)
-        current_observation_flat = np.array(current_observation_flat)
-        #print("Lets debug this")
-        #import pdb; pdb.set_trace()
+        current_observations_flat = np.array(current_observations_flat)
+        
         #print("State Values:", state_values)
-        return distances, weight_literal, state_values, current_observation_flat, probs, actions, agent_position, hazard_position, 
-distances, weights, state_value, current_state, probs, agent_position, hazard_position, actions = get_distance().dp_net(1, 1, 1, 1)
-#print("Distances to objects:", distances, "Weight of Literals:", weights, "State observation values:", state_value, "Agent Position:", agent_position)
+        #print("reward we want:", np.array([ rewards[i]*distances[i] for i in range(len(rewards)) ]).flatten() )
+        return distances, weight_literal, state_values, current_observations_flat, probs, actions, agent_positions, hazard_positions, 
+
+# print("Running get_distance():")
+distances, weights, state_value, current_state, probs, agent_positions, hazard_positions, actions = get_distance(env).dp_net(random_action_sampler, 1000)
+# print("Running get_distance() completed successfully")
+# #print("Distances to objects:", distances, "Weight of Literals:", weights, "State observation values:", state_value, "Agent Position:", agent_position)
