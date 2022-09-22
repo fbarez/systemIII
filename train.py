@@ -1,8 +1,10 @@
-from agents import *
-from envs import *
+#from agents import *
+#from envs import *
 from utils import *
 from config import *
 from torch.multiprocessing import Pipe
+from model import S3Model
+from world import CreateWorld, flatten_state
 
 from tensorboardX import SummaryWriter
 
@@ -10,76 +12,89 @@ import numpy as np
 import copy
 
 
-# def main():
-#     print({section: dict(config[section]) for section in config.sections()})
-#     train_method = default_config['TrainMethod']
-#     env_id = default_config['EnvID']
-#     env_type = default_config['EnvType']
+def main():
+    """
+    print({section: dict(config[section]) for section in config.sections()})
+    train_method = default_config['TrainMethod']
+    env_id = default_config['EnvID']
+    env_type = default_config['EnvType']
 
-#     if env_type == 'mario':
-#         env = BinarySpaceToDiscreteSpaceEnv(gym_super_mario_bros.make(env_id), COMPLEX_MOVEMENT)
-#     elif env_type == 'atari':
-#         env = gym.make(env_id)
-#     else:
-#         raise NotImplementedError
-#     # Assert the observation is only one dimenstion
-#     assert len(env.observation_space.shape)==1 
-#     input_size = env.observation_space.shape[0]  # 4
-#     output_size = env.action_space.n  # 2
+    #if env_type == 'mario':
+    #    env = BinarySpaceToDiscreteSpaceEnv(gym_super_mario_bros.make(env_id), COMPLEX_MOVEMENT)
+    #elif env_type == 'atari':
+    #    env = gym.make(env_id)
+    if env_type == 'safety':
+        env = gym.make(env_id)
+    else:
+        raise NotImplementedError
+    # Assert the observation is only one dimenstion
+    assert len(env.observation_space.shape)==1 
+    """
+    env = CreateWorld()
+    curr_state = env.reset()
 
-#     if 'Breakout' in env_id:
-#         output_size -= 1
+    state_size = flatten_state(curr_state).size
+    #input_size  = env.observation_space.shape[0]  #
+    action_size = env.action_space.sample().size #.n  # 2
+    print("state_size: ", state_size)
+    print("action_size: ", action_size)
+    print("action_space: ", env.action_space.sample().size() )
 
-#     env.close()
 
-#     is_load_model = False
-#     is_render = False
-#     model_path = 'models/{}.model'.format(env_id)
-#     icm_path = 'models/{}.icm'.format(env_id)
+    env.close()
 
-#     writer = SummaryWriter()
+    is_load_model = False
+    is_render = False
+    #model_path = 'models/{}.model'.format(env_id)
+    #icm_path = 'models/{}.icm'.format(env_id)
 
-#     use_cuda = default_config.getboolean('UseGPU')
-#     use_gae = default_config.getboolean('UseGAE')
-#     use_noisy_net = default_config.getboolean('UseNoisyNet')
+    writer = SummaryWriter()
 
-#     lam = float(default_config['Lambda'])
-#     num_worker = int(default_config['NumEnv'])
+    use_cuda = default_config.getboolean('UseGPU')
+    use_gae = default_config.getboolean('UseGAE')
+    use_noisy_net = default_config.getboolean('UseNoisyNet')
 
-#     num_step = int(default_config['NumStep'])
+    lam = float(default_config['Lambda'])
+    num_worker = int(default_config['NumEnv'])
 
-#     ppo_eps = float(default_config['PPOEps'])
-#     epoch = int(default_config['Epoch'])
-#     mini_batch = int(default_config['MiniBatch'])
-#     batch_size = int(num_step * num_worker / mini_batch)
-#     learning_rate = float(default_config['LearningRate'])
-#     entropy_coef = float(default_config['Entropy'])
-#     gamma = float(default_config['Gamma'])
-#     eta = float(default_config['ETA'])
+    num_step = int(default_config['NumStep'])
 
-#     clip_grad_norm = float(default_config['ClipGradNorm'])
+    ppo_eps = float(default_config['PPOEps'])
+    epoch = int(default_config['Epoch'])
+    mini_batch = int(default_config['MiniBatch'])
+    batch_size = int(num_step * num_worker / mini_batch)
+    learning_rate = float(default_config['LearningRate'])
+    entropy_coef = float(default_config['Entropy'])
+    gamma = float(default_config['Gamma'])
+    eta = float(default_config['ETA'])
 
-#     reward_rms = RunningMeanStd()
-#     obs_rms = RunningMeanStd(shape=(1, 4, 84, 84))
+    clip_grad_norm = float(default_config['ClipGradNorm'])
 
-#     pre_obs_norm_step = int(default_config['ObsNormStep'])
-#     discounted_reward = RewardForwardFilter(gamma)
+    reward_rms = RunningMeanStd()
+    obs_rms   = RunningMeanStd(shape=(1, 4, 84, 84))
 
-#     agent = ICMAgent
+    pre_obs_norm_step = int(default_config['ObsNormStep'])
+    discounted_reward = RewardForwardFilter(gamma)
 
-#     if default_config['EnvType'] == 'atari':
-#         env_type = AtariEnvironment
-#     elif default_config['EnvType'] == 'mario':
-#         env_type = MarioEnvironment
-#     else:
-#         raise NotImplementedError
-#     # hidden_size1=265
-#     # hidden_size2=64
+    agent = S3Model
+    """
+    if default_config['EnvType'] == 'atari':
+        env_type = AtariEnvironment
+    elif default_config['EnvType'] == 'mario':
+        env_type = MarioEnvironment
+    else:
+        raise NotImplementedError
+    """
+    hidden_size1=265
+    hidden_size2=64
     agent = agent(
-        input_size,
-        # hidden_size1,
-        # hidden_size2,
-        output_size,
+        state_size,
+        action_size,
+        hidden_size1,
+        hidden_size2,
+        use_cuda=use_cuda 
+    )
+    """
         num_worker,
         num_step,
         gamma,
@@ -91,10 +106,10 @@ import copy
         batch_size=batch_size,
         ppo_eps=ppo_eps,
         eta=eta,
-        use_cuda=use_cuda,
         use_gae=use_gae,
         #use_noisy_net=use_noisy_net
     )
+    """
 
     if is_load_model:
         if use_cuda:
@@ -198,7 +213,8 @@ import copy
                 sample_rall = 0
                 sample_step = 0
                 sample_i_rall = 0
-        #compute constraint reward --- this needs more thinking!
+
+        # compute constraint reward --- this needs more thinking!
         constraint_reward = agent.evaluated_constraint_reward(next_states)  
         # calculate last next value
         _, value, _ = agent.get_action((states - obs_rms.mean) / np.sqrt(obs_rms.var))
@@ -260,4 +276,4 @@ import copy
 
 
 if __name__ == '__main__':
-    main_ppo()
+    main()

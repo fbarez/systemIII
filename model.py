@@ -44,7 +44,14 @@ class ActorCriticNetwork(nn.Module):
 
 
 class S3Model(nn.Module):
-    def __init__(self, state, hidden_size1, hidden_size2, next_state, use_cuda=True):
+    def __init__(self,
+                state_size, 
+                action_size, 
+                hidden_size1, 
+                hidden_size2, 
+                use_cuda=True,
+                learning_rate=0.01
+                ):
         """[summary]
 
         Args:
@@ -56,52 +63,45 @@ class S3Model(nn.Module):
         """        
         super(S3Model, self).__init__()
         
-        self.state = state
-        self.next_state = next_state
+        self.state_size  = state_size
+        self.action_size = action_size
 
         self.device = torch.device('cuda' if use_cuda else 'cpu')
 
-        self.forward_net = nn.Sequential(
-            
-            nn.Linear(input, hidden_size1),
+        self.actor = nn.Sequential(
+            nn.Linear(state_size, hidden_size1),
+            nn.ReLU(),
+            nn.Linear(hidden_size1, hidden_size2),
+            nn.ReLU(),
+            nn.Linear(hidden_size2, action_size),
+            nn.Softmax(dim=-1)
+        )
+
+        self.forward_net = nn.Sequential( 
+            nn.Linear(state_size+action_size, hidden_size1),
             nn.LeakyReLU(),
             nn.Linear(hidden_size1, hidden_size2),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size2, next_state)
+            nn.Linear(hidden_size2, state_size)
         )
 
-        # for p in self.modules():
-        #     if isinstance(p, nn.Conv2d):
-        #         init.kaiming_uniform_(p.weight)
-        #         p.bias.data.zero_()
+        self.optimizer_actor = optim.Adam(self.actor, lr=learning_rate)
+        self.optimizer_ff    = optim.Adam(self.forward_net, lr=learning_rate)
 
-        #     if isinstance(p, nn.Linear):
-        #         init.kaiming_uniform_(p.weight, a=1.0)
-        #         p.bias.data.zero_()
+    def get_action(self, state):
+        state = torch.Tensor(state).to(self.device)
+        action_prob = state.float()
+        print( action_prob )
 
-    def forward(self, inputs):
-        state, next_state, action = inputs
-        #phi1 = encode_state
-        #phi2 = encoded_next_state
-        #encode_state = self.feature(state)
-        #encode_next_state = self.feature(next_state)
-        # get pred action
-        # pred_action = torch.cat((state, next_state), 1) #encode should inputs be images
-        # pred_action = self.inverse_net(pred_action)
-        # # ---------------------
+        action = self.random_choice_prob_index(action_prob)
 
-        # get pred next state
-        #pred_next_state = torch.cat((state, action), 1)
-        #pred_next_state = self.forward_net(pred_next_state)
+        return action, action_prob
 
-        # # residual
-        # for i in range(4):
-        #     pred_next_state_feature = self.residual[i * 2](torch.cat((pred_next_state_feature_orig, action), 1))
-        #     pred_next_state_feature_orig = self.residual[i * 2 + 1](
-        #         torch.cat((pred_next_state_feature, action), 1)) + pred_next_state_feature_orig
+    def forward(self, curr_state):
+        action, action_prob = self.get_action( curr_state )
+        pred_next_state = self.forward_net(torch.cat((curr_state, action), 1))
 
-        pred_next_state = self.forward_net(torch.cat((state, action), 1))
-
-        real_next_state = next_state
-        #it should return st, st+1, pred action
-        return real_next_state, pred_next_state #, pred_action
+        return action, pred_next_state
+    
+    def train(self):
+        return None
