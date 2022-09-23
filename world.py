@@ -2,6 +2,7 @@ import safety_gym
 import gym
 from safety_gym.envs.engine import Engine
 import numpy as np
+import torch
 
 config = {
     'robot_base': 'xmls/car.xml',
@@ -22,8 +23,19 @@ def CreateWorld():
     env = Engine(config)
     return env
 
-def flatten_state( current_state ):
+def flatten_state( current_state, return_mapping=False ):
+    if return_mapping:
+        state_mapping = {}
+        temp = []
+        for key, item in current_state.items():
+            starting_index = len(temp)
+            temp.extend( item.flatten() )
+            ending_index = len(temp)
+            state_mapping[key] = [starting_index, ending_index]
+
+        return torch.tensor( temp ), state_mapping
+
     temp = []
     for item in current_state.values():
         temp.extend(item.flatten())
-    return np.array(temp)
+    return torch.tensor(temp)

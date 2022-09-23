@@ -7,6 +7,7 @@ import gym
 import time
 import numpy as np
 import pandas as pd
+import torch
 from world import CreateWorld, flatten_state
 print("ignore...\n")
 
@@ -34,96 +35,43 @@ class get_distance(object):
         action = env.action_space.sample()
         return action    
 
-    def dp_net(self, action_sampler=None, num_iter=100, render=None):
+    def n_step_rollout( self, action_sampler=None, curr_state=None, num_iter=100, render=False ):
         """[summary]
-        Args:
-            state ([type]): [description]
-            weights ([type]): [description]
-            state_values ([type]): [description]
-            probs ([type]): [description]
-        Returns:
-            [type]: [description]
+        action_sampler: function that takes in a state and returns an action
+        current_state: the initial state of the rollout
+        num_iter: number of iterations to run the rollout
+        render: whether to render the environment
         """
+        # if no agent provided, use a random action sampler
         if action_sampler is None:
             action_sampler = self.random_action_sampler
- 
-        #env.reset()
-        distances = []
-        state_values = []
-        current_observations = []
-        current_observations_flat = []
-        rewards = []
-        agent_positions = []
-        hazard_positions = []
-        probs = []
-        #state_values = []
-        actions = []
-
-        # initialise next state
-        current_state = env.reset()
         
-        for _ in range(num_iter):
-            current_observations.append(current_state)            
+        actions = []
+        curr_observations_flat = []
+        next_observations_flat = []
+        rewards = []
+        dones = []
+        
+        # initialise state
+        if curr_state is None:
+            curr_state = env.reset()
 
-            action = action_sampler( self.env )
-            actions.append(action)
+        for _ in range(num_iter):
+            # get next state
+            curr_state_flat = flatten_state(curr_state)
+            action = action_sampler( curr_state_flat ).detach()
             output = next_observation, reward, done, info = self.env.step(action)
             #print(f"\n\noutput {_}:\n", [ o for o in output ])
             
-            current_observations_flat.append(flatten_state(current_state))
-            rewards.append(reward)
-            distances.append((1-next_observation['hazards_lidar'])*self.env.config['lidar_max_dist'])
-            
-            '''
-            Return a robot-centric lidar observation of a list of positions.
-            Lidar is a set of bins around the robot (divided evenly in a circle).
-            The detection directions are exclusive and exhaustive for a full 360 view.
-            Each bin reads 0 if there are no objects in that direction.
-            If there are multiple objects, the distance to the closest one is used.
-            Otherwise the bin reads the fraction of the distance towards the robot.
-            E.g. if the object is 90% of lidar_max_dist away, the bin will read 0.1,
-            and if the object is 10% of lidar_max_dist away, the bin will read 0.9.
-            (The reading can be thought of as "closeness" or inverse distance)
-            This encoding has some desirable properties:
-            - bins read 0 when empty
-            - bins smoothly increase as objects get close
-            - maximum reading is 1.0 (where the object overlaps the robot)
-            - close objects occlude far objects
-            - constant size observation with variable numbers of objects
-            '''
-            probs.append(next_observation['hazards_lidar'])
             if render:
-                self.env.render() #uncomment if you want to visulaize 
+                self.env.render()
 
-            
-            all_observations = {} 
-            # get the state describtion
-            for key in next_observation.keys(): 
-                if len(next_observation[key].shape)>1:continue
-                all_observations[key] = next_observation[key] 
-            all_observations = np.concatenate([all_observations[key] for key in all_observations.keys()]) 
-            state_values.append(all_observations)
-                
-            #converting dict into list 
-            for element in next_observation.items():
-                for item in element[1]:
-                    state_values.extend(to_flatten_list(item))
-            
-            #do the same operation for the current state 
-            for element in current_state.values():
-                current_observations_flat.append(item.flatten())
-
-            #turn the state description dictionary into a list 
-            for key, value in next_observation.items():
-                state_values = [key, value]
-                state_values.append(state_values)
-                
-            #get agent's current position
-            agent_positions.append(self.env.world.robot_pos())
-            
-            #get position of the hazards
-            for h_pos in self.env.hazards_pos:
-                hazard_positions.append(h_pos)
+            # save information from episode
+            actions.append(action)
+            curr_observations_flat.append( curr_state_flat )
+            next_observations_flat.append( flatten_state(next_observation) )
+            rewards.append(reward)
+            dones.append(done)
 
             # get things ready for next loop
             if done:
@@ -131,23 +79,69 @@ class get_distance(object):
             else:
                 current_state = next_observation
 
+        actions = torch.stack(actions)
+        next_observations_flat = torch.stack(next_observations_flat)
+        curr_observations_flat = torch.stack(curr_observations_flat)
+        rewards = torch.tensor(rewards)
+        dones   = torch.tensor(dones)
+
+        return actions, curr_observations_flat, next_observations_flat, rewards, dones, curr_state
+
+    def extract_distances(self, observations):
+        '''
+        Return a robot-centric lidar observation of a list of positions.
+        Lidar is a set of bins around the robot (divided evenly in a circle).
+        The detection directions are exclusive and exhaustive for a full 360 view.
+        Each bin reads 0 if there are no objects in that direction.
+        If there are multiple objects, the distance to the closest one is used.
+        Otherwise the bin reads the fraction of the distance towards the robot.
+        E.g. if the object is 90% of lidar_max_dist away, the bin will read 0.1,
+        and if the object is 10% of lidar_max_dist away, the bin will read 0.9.
+        (The reading can be thought of as "closeness" or inverse distance)
+        This encoding has some desirable properties:
+        - bins read 0 when empty
+        - bins smoothly increase as objects get close
+        - maximum reading is 1.0 (where the object overlaps the robot)
+        - close objects occlude far objects
+        - constant size observation with variable numbers of objects
+        '''
+ 
+        #env.reset()
+        distances = []
+        agent_positions = []
+        hazard_positions = []
+        probs = []
+        actions = []
+
+        for state in observations: 
+            distances.append((1-state['hazards_lidar'])*self.env.config['lidar_max_dist'])
+
+            probs.append(state['hazards_lidar'])
+            
+            #get agent's current position
+            agent_positions.append(self.env.world.robot_pos())
+            
+            #get position of the hazards
+            for h_pos in self.env.hazards_pos:
+                hazard_positions.append(h_pos)
+
         distances      = np.array(distances)
         weight_literal = 1 - distances
-        state_values   = np.array(state_values)
-        current_observations_flat = np.array(current_observations_flat)
         probs = np.array(probs)
         hazard_positions = np.array(hazard_positions)
         agent_positions  = np.array(agent_positions)
         actions = np.array(actions)
-        rewards = np.array(rewards)
 
-        return distances, weight_literal, state_values, current_observations_flat, probs, agent_positions, hazard_positions, actions, rewards
+        return distances, weight_literal, probs, agent_positions, hazard_positions, actions
 
 if __name__ == "__main__":    
     print("\nRunning get_distance():")
     env = CreateWorld()
-    distances, weights, state_values, current_states, probs, agent_positions, hazard_positions, actions, rewards = get_distance(env).dp_net( num_iter=1000, render=True)
-    print("State Values:", state_values)
+    runner = get_distance(env)
+    actions, curr_observations, next_observations, rewards, dones, current_state = runner.n_step_rollout( num_iter=1000, render=True)
+    distances, weight_literal, probs, agent_positions, hazard_positions, actions = runner.extract_distances(next_observations)
+    print("State Values:", next_observations)
+    print("State Values:", np.array([ flatten_state(x) for x in next_observations ]) )
     print("reward we want:", np.array([ rewards[i]*distances[i] for i in range(len(rewards)) ]).flatten()[:10] )
     # print("Running get_distance() completed successfully")
     # #print("Distances to objects:", distances, "Weight of Literals:", weights, "State observation values:", state_value, "Agent Position:", agent_position)
