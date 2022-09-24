@@ -1,4 +1,5 @@
 # #Author Fazl Barez
+from re import I
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -8,84 +9,65 @@ import time
 import numpy as np
 import pandas as pd
 import torch
-from world import CreateWorld, flatten_state
+from world import CreateWorld
+from memory import Memory
+from typing import Optional, Callable
 print("ignore...\n")
 
 # , 'Position Agent', next_observation['observe_qpos']
-def to_flatten_list(l):
-    flat_list = []
-    try:
-        for element in l:
-            try:
-                len(element)
-                flat_list.append(element)
-            except:
-                flat_list.extend(to_flatten_list(element))
-    except:
-        return [l]
-            
-    return flat_list
-
 class get_distance(object):
-    def __init__(self, env):
+    def __init__(self, env, agent=None):
         self.env = env
+        self.agent = agent
+        self.memory = Memory() if agent is None else self.agent.memory
         return
 
     def random_action_sampler( self, state ):
-        action = env.action_space.sample()
-        return action    
+        action = self.env.action_space.sample()
+        return action, 0
 
-    def n_step_rollout( self, action_sampler=None, curr_state=None, num_iter=100, render=False ):
+    def n_step_rollout( self,
+                        action_sampler: Optional[Callable] = None,
+                        curr_state: Optional[torch.Tensor] = None,
+                        num_iter: int = 100,
+                        render: bool  = False ):
         """[summary]
         action_sampler: function that takes in a state and returns an action
         current_state: the initial state of the rollout
         num_iter: number of iterations to run the rollout
         render: whether to render the environment
         """
-        # if no agent provided, use a random action sampler
-        if action_sampler is None:
-            action_sampler = self.random_action_sampler
-        
-        actions = []
-        curr_observations_flat = []
-        next_observations_flat = []
-        rewards = []
-        dones = []
-        
-        # initialise state
-        if curr_state is None:
-            curr_state = env.reset()
-
-        for _ in range(num_iter):
-            # get next state
-            curr_state_flat = flatten_state(curr_state)
-            action = action_sampler( curr_state_flat ).detach()
-            output = next_observation, reward, done, info = self.env.step(action)
-            #print(f"\n\noutput {_}:\n", [ o for o in output ])
+        with torch.no_grad():
+            # if no agent provided, use a random action sampler
+            if action_sampler is None:
+                action_sampler = self.random_action_sampler
             
-            if render:
-                self.env.render()
+            # initialise state
+            if curr_state is None:
+                curr_state = env.reset()
+            
+            for _ in range(num_iter):
+                # Get the next state
+                action, action_logprob = action_sampler( curr_state )
+                [ next_state, reward, done, info ] = self.env.step( action )
+                next_state = self.memory.flatten_state(next_state)
+                pred_state =  None if self.agent is None or not hasattr(self.agent, 'predict')\
+                                   else self.agent.predict( curr_state, action )
 
-            # save information from episode
-            actions.append(action)
-            curr_observations_flat.append( curr_state_flat )
-            next_observations_flat.append( flatten_state(next_observation) )
-            rewards.append(reward)
-            dones.append(done)
+                # Store the transition
+                self.memory.add(curr_state, next_state, action, action_logprob, reward, done)
 
-            # get things ready for next loop
-            if done:
-                current_state = self.env.reset()
-            else:
-                current_state = next_observation
+                if render:
+                    self.env.render()
 
-        actions = torch.stack(actions)
-        next_observations_flat = torch.stack(next_observations_flat)
-        curr_observations_flat = torch.stack(curr_observations_flat)
-        rewards = torch.tensor(rewards)
-        dones   = torch.tensor(dones)
+                # get things ready for next loop
+                if done:
+                    curr_state = self.memory.flatten_state( self.env.reset() )
+                else:
+                    curr_state = next_state
 
-        return actions, curr_observations_flat, next_observations_flat, rewards, dones, curr_state
+            return curr_state
+
 
     def extract_distances(self, observations):
         '''
@@ -138,8 +120,8 @@ if __name__ == "__main__":
     print("\nRunning get_distance():")
     env = CreateWorld()
     runner = get_distance(env)
-    actions, curr_observations, next_observations, rewards, dones, current_state = runner.n_step_rollout( num_iter=1000, render=True)
-    distances, weight_literal, probs, agent_positions, hazard_positions, actions = runner.extract_distances(next_observations)
+    runner.n_step_rollout( num_iter=1000, render=True)
+    distances, weight_literal, probs, agent_positions, hazard_positions, actions = runner.extract_distances()
     print("State Values:", next_observations)
     print("State Values:", np.array([ flatten_state(x) for x in next_observations ]) )
     print("reward we want:", np.array([ rewards[i]*distances[i] for i in range(len(rewards)) ]).flatten()[:10] )
