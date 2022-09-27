@@ -6,31 +6,47 @@ import numpy as np
 import math
 from torch.nn import init
 from memory import Memory
+from params import Params
 import os
 
-from torch.distributions import MultivariateNormal
+from torch.distributions import MultivariateNormal, Categorical
 
 class ActorNetwork(nn.Module):
-    def __init__(self, state_size, action_size, action_std_init, use_cuda, lr,
-            hidden_size1=256, hidden_size2=64, chkpt_dir='tmp/ppo'):
+    def __init__(self, params:Params):
         super(ActorNetwork, self).__init__()
 
-        self.device = torch.device('cuda' if use_cuda else 'cpu')
+        # shortcut to parameters
+        p = params
+        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
-        self.checkpoint_file = os.path.join(chkpt_dir, 'actor_torch_ppo')
-        self.actor = nn.Sequential(
-            nn.Linear(state_size, hidden_size1),
-            nn.ReLU(),
-            nn.Linear(hidden_size1, hidden_size2),
-            nn.ReLU(),
-            nn.Linear(hidden_size2, action_size),
-            nn.Tanh()
-        ).float().to(self.device)
+        self.checkpoint_file = os.path.join(
+            p.checkpoint_dir, p.model_name+'_actor'
+        )
+        self.actions_continuous = p.actions_continuous
 
-        self.action_size = action_size
-        self.set_action_std(action_std_init)
+        self.action_size = p.action_size
+        self.set_action_std(p.action_std)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        if self.actions_continuous: 
+            self.actor = nn.Sequential(
+                nn.Linear(p.state_size, p.hidden_size1),
+                nn.ReLU(),
+                nn.Linear(p.hidden_size1, p.hidden_size2),
+                nn.ReLU(),
+                nn.Linear(p.hidden_size2, p.action_size),
+                nn.Tanh()
+            ).float()
+        else:
+            self.actor = nn.Sequential(
+                nn.Linear(p.state_size, p.hidden_size1),
+                nn.ReLU(),
+                nn.Linear(p.hidden_size1, p.hidden_size2),
+                nn.ReLU(),
+                nn.Linear(p.hidden_size2, p.action_size),
+                nn.Softmax(dim=-1)
+            ).float()
+
+        self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
         self.to(self.device)
 
     def cov_mat(self, action_mean):
@@ -39,9 +55,14 @@ class ActorNetwork(nn.Module):
         return cov_mat
 
     def forward(self, state):
-        action_mean = self.actor(state)
-        cov_mat = self.cov_mat(action_mean)
-        distribution = MultivariateNormal(action_mean, cov_mat)
+        if self.actions_continuous:
+            action_mean = self.actor(state)
+            cov_mat = self.cov_mat(action_mean)
+            distribution = MultivariateNormal(action_mean, cov_mat)
+        
+        else:
+            action_probs = self.actor(state)
+            distribution = Categorical(action_probs)
 
         return distribution
 
@@ -71,27 +92,28 @@ class ActorNetwork(nn.Module):
         self.load_state_dict(torch.load(self.checkpoint_file))
 
 class PredictorNetwork(nn.Module):
-    def __init__(self, state_size, action_size, use_cuda, lr,
-            hidden_size1=256, hidden_size2=64, chkpt_dir='tmp/ppo'):
+    def __init__(self, params:Params):
         super(PredictorNetwork, self).__init__()
+        p = params
 
-        self.device = torch.device('cuda' if use_cuda else 'cpu')
-
-        self.checkpoint_file = os.path.join(chkpt_dir, 'predictor_torch_ppo')
+        self.checkpoint_file = os.path.join(
+            p.checkpoint_dir, p.model_name+'_predictor'
+        )
         self.predictor = nn.Sequential(
-                nn.Linear(state_size+action_size, hidden_size1),
+                nn.Linear(p.state_size+p.action_size, p.hidden_size1),
                 nn.LeakyReLU(),
-                nn.Linear(hidden_size1, hidden_size2),
+                nn.Linear(p.hidden_size1, p.hidden_size2),
                 nn.LeakyReLU(),
-                nn.Linear(hidden_size2, state_size),
-        ).float().to(self.device)
+                nn.Linear(p.hidden_size2, p.state_size),
+        ).float()
 
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
+        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
         self.to(self.device)
 
     def forward(self, prev_states, actions, dim=-1):
         inputs =  torch.cat((prev_states, actions), dim).float()
-        pred_next_states = self.predictor(inputs)
+        pred_next_states = self.predictor(inputs) + prev_states
         return pred_next_states
 
     def save_checkpoint(self):
@@ -101,26 +123,27 @@ class PredictorNetwork(nn.Module):
         self.load_state_dict(torch.load(self.checkpoint_file))
 
 class CriticNetwork(nn.Module):
-    def __init__(self, state_size, use_cuda, lr,
-            hidden_size1=256, hidden_size2=64, chkpt_dir='tmp/ppo'):
+    def __init__(self, params:Params):
         super(CriticNetwork, self).__init__()
+        p = params
 
-        self.checkpoint_file = os.path.join(chkpt_dir, 'critic_torch_ppo')
-        self.critic = nn.Sequential(
-                nn.Linear(state_size, hidden_size1),
-                nn.ReLU(),
-                nn.Linear(hidden_size1, hidden_size2),
-                nn.ReLU(),
-                nn.Linear(hidden_size2, 1)
+        self.checkpoint_file = os.path.join(
+            p.checkpoint_dir, p.model_name+'_critic'
         )
+        self.critic = nn.Sequential(
+                nn.Linear(p.state_size, p.hidden_size1),
+                nn.ReLU(),
+                nn.Linear(p.hidden_size1, p.hidden_size2),
+                nn.ReLU(),
+                nn.Linear(p.hidden_size2, 1)
+        ).float()
 
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        self.device = torch.device('cuda' if use_cuda else 'cpu')
+        self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
+        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
         self.to(self.device)
 
     def forward(self, state):
         value = self.critic(state)
-
         return value
 
     def save_checkpoint(self):

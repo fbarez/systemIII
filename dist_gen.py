@@ -5,7 +5,7 @@ warnings.filterwarnings('ignore')
 
 import safety_gym
 import gym
-import time
+from time import time
 import numpy as np
 import pandas as pd
 import torch
@@ -37,6 +37,9 @@ class get_distance(object):
         num_iter: number of iterations to run the rollout
         render: whether to render the environment
         """
+        zero = lambda : torch.tensor(0)
+        agent_has = lambda attr : hasattr(self.agent, attr)
+
         with torch.no_grad():
             # if no agent provided, use a random action sampler
             if action_sampler is None:
@@ -49,13 +52,14 @@ class get_distance(object):
             for _ in range(num_iter):
                 # Get the next state
                 action, action_logprob = action_sampler( curr_state )
-                [ next_state, reward, done, info ] = self.env.step( action )
+                [ next_state, reward, done, info ] = self.env.step(np.array( action ))
                 next_state = self.memory.flatten_state(next_state)
-                pred_state =  None if self.agent is None or not hasattr(self.agent, 'predict')\
-                                   else self.agent.predict( curr_state, action )
+                value = self.agent.critic(curr_state) if agent_has('critic') else zero()
+                pred_state = self.agent.predictor(curr_state) if agent_has('predictor') else zero()
 
                 # Store the transition
-                self.memory.add(curr_state, next_state, action, action_logprob, reward, done)
+                self.memory.add(curr_state, next_state, pred_state, 
+                                action, action_logprob, reward, value, done)
 
                 if render:
                     self.env.render()

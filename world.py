@@ -10,13 +10,13 @@ config = {
     'observe_goal_lidar': True,
     'observe_box_lidar': False,
     'observe_hazards': True,
-    'observe_vases': False,
+    'observe_vases': True,
     'constrain_hazards': False,
     'observation_flatten': False,
     'lidar_max_dist': 5, #how far it can see
-    'lidar_num_bins': 1,
+    'lidar_num_bins': 10,
     'hazards_num': 3,
-    'vases_num': 0
+    'vases_num': 1
 }
 
 def CreateWorld():
