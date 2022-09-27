@@ -2,49 +2,70 @@ import numpy as np
 import torch
 
 class Memory:
-    def __init__(self, batch_size=64, use_cuda=None, state_mapping=None):
+    def __init__(self, use_cuda=False, state_mapping=None):
         self.state_mapping = state_mapping
-        self.batch_size = batch_size
         self.device = torch.device("cuda" if use_cuda else "cpu")
 
         self.curr_states = []
         self.next_states = []
+        self.pred_states = []
         self.actions = []
         self.logprobs = []
         self.rewards = []
+        self.values = []
         self.dones = []
 
-    def generate_batches(self):
-        n_states = len(self.curr_states)
-        batch_start = np.arange(0, n_states, self.batch_size)
-        indices = np.arange(n_states, dtype=np.int64)
-        np.random.shuffle(indices)
-        batches = [indices[i:i+self.batch_size] for i in batch_start]
+    def safety_check(self):
+        arrays = [
+            self.curr_states,
+            self.next_states,
+            self.pred_states,
+            self.actions,
+            self.logprobs,
+            self.rewards,
+            self.values,
+            self.dones
+        ]
+        L = len(arrays[0])
+        for a in arrays:
+            assert len(a) == L
 
-        return  torch.stack(self.curr_states).to(self.device),\
-                torch.stack(self.next_states).to(self.device),\
-                torch.stack(self.actions).to(self.device),\
-                torch.stack(self.logprobs).to(self.device),\
-                np.array(self.rewards),\
-                np.array(self.dones),\
-                batches
+        return True
 
-    def add(self, curr_state_flat, next_state_flat, action, action_logprob, reward, done):
-        self.curr_states.append(curr_state_flat)
-        self.next_states.append(next_state_flat)
+    def prepare(self):
+        self.curr_states = torch.stack(self.curr_states).to(self.device)
+        self.next_states = torch.stack(self.next_states).to(self.device)
+        self.pred_states = torch.stack(self.pred_states).to(self.device)
+        self.actions = torch.stack(self.actions).to(self.device)
+        self.logprobs = torch.stack(self.logprobs).to(self.device)
+        self.rewards = np.array(self.rewards)
+        self.values = torch.stack(self.values).to(self.device)
+        self.dones = np.array(self.dones)
+
+        # basic check to make sure that each array has the correct number of items
+        self.safety_check()
+        return self
+
+    def add(self, curr_state, next_state, pred_state, action, action_logprob, reward, value, done):
+        # Note that here we should only add states that are already flattened
+        self.curr_states.append(curr_state)
+        self.next_states.append(next_state)
+        self.pred_states.append(pred_state)
         self.actions.append(action)
         self.logprobs.append(action_logprob)
         self.rewards.append(reward)
+        self.values.append(value)
         self.dones.append(done)
 
     def clear_memory(self):
         self.curr_states = []
         self.next_states = []
+        self.pred_states = []
         self.actions = []
-        self.action_logprob = []
+        self.logprobs = []
         self.rewards = []
-        self.dones = []
-   
+        self.values = []
+        self.dones = [] 
     
     def flat_get(self, current_state_flat, key):
         if not self.state_mapping:
@@ -55,6 +76,9 @@ class Memory:
     def map_and_flatten(self, state):
         state_mapping = {}
         state_flat = []
+        if type(state) is np.ndarray:
+            return torch.tensor(state).float().to(self.device), state_mapping
+
         for key, item in state.items():
             starting_index = len(state_flat)
             state_flat.extend( item.flatten() )
@@ -71,24 +95,12 @@ class Memory:
         if self.state_mapping is None:
             return self.map_and_flatten(state)[0]
 
+        if type(state) is np.ndarray:
+            return torch.tensor(state).float().to(self.device)
+
         state_flat = []
         for item in state.values():
             state_flat.extend(item.flatten())
         state_flat = torch.tensor(state_flat).float().to(self.device)
         return state_flat
-
-    def to_flatten_list(self, l):
-        flat_list = []
-        try:
-            for element in l:
-                try:
-                    len(element)
-                    flat_list.append(element)
-                except:
-                    flat_list.extend(self.to_flatten_list(element))
-        except:
-            return [l]
-                
-        return flat_list
-
     
