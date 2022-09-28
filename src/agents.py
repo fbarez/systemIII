@@ -1,158 +1,198 @@
+from importlib.metadata import distribution
+from re import I
+from tkinter import W
 import numpy as np
 
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
 import torch.optim as optim
+from typing import Optional
 
-from torch.distributions.categorical import Categorical
 
-from model import CnnActorCriticNetwork, S3Model
+from memory import Memory
+from model import ActorNetwork, PredictorNetwork, CriticNetwork
+from params import Params
 
-hidden_size1=256
-hidden_size2 = 64
-class S3Agent(object):
-    def __init__(
-            self,
-            input_size,
-            output_size,
-            num_env,
-            num_step,
-            gamma,
-            lam=0.95,
-            learning_rate=1e-4,
-            ent_coef=0.01,
-            clip_grad_norm=0.5,
-            epoch=3,
-            batch_size=128,
-            ppo_eps=0.1,
-            eta=0.01,
-            use_gae=True,
-            use_cuda=False,
-            use_noisy_net=False):
-        self.model = CnnActorCriticNetwork(input_size, hidden_size1, hidden_size2, output_size, use_noisy_net)
-        self.num_env = num_env
-        self.output_size = output_size
-        self.input_size = input_size
-        self.num_step = num_step
-        self.gamma = gamma
-        self.lam = lam
-        self.epoch = epoch
-        self.batch_size = batch_size
-        self.use_gae = use_gae
-        self.ent_coef = ent_coef
-        self.eta = eta
-        self.ppo_eps = ppo_eps
-        self.clip_grad_norm = clip_grad_norm
-        self.device = torch.device('cuda' if use_cuda else 'cpu')
+class Agent:
+    def __init__(self, params:Params):
+        # initialize hyperparameters / config
+        self.params = params    
+        self.device = torch.device('cuda' if self.params.use_cuda else 'cpu')
 
-        self.s3 = S3Model(input_size, hidden_size1, hidden_size2, output_size, use_cuda)
-        self.optimizer = optim.Adam(list(self.model.parameters()) + list(self.s3.parameters()),
-                                    lr=learning_rate)
-        self.s3 = self.s3.to(self.device)
+        # initialize memory and networks
+        self.memory = Memory( self.params.use_cuda )
 
-        self.model = self.model.to(self.device)
+        # shortcut parameters
+        self.gae_lambda   = self.params.gae_lambda
+        self.reward_decay = self.params.reward_decay
+        self.batch_size   = self.params.batch_size
+        self.action_std   = self.params.action_std
 
-    def get_action(self, state):
-        state = torch.Tensor(state).to(self.device)
-        state = state.float()
-        policy, value = self.model(state)
-        action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
+    def set_action_std(self, new_action_std):
+        if not hasattr(self, 'actor'):
+            raise Exception("Agent has no attribute 'actor'")
+        self.action_std = new_action_std
+        self.actor.set_action_std(new_action_std)
 
-        action = self.random_choice_prob_index(action_prob)
+    def decay_action_std(self, action_std_decay_rate, min_action_std):
+        self.action_std = self.action_std - action_std_decay_rate
+        self.action_std = round(self.action_std, 4)
+        if (self.action_std <= min_action_std):
+            self.action_std = min_action_std
+        else:
+            print("setting actor output action_std to : ", self.action_std)
+        self.set_action_std(self.action_std)
 
-        return action, value.data.cpu().numpy().squeeze(), policy.detach()
+    def choose_action( self, state ): 
+        if not hasattr(self, 'actor'):
+            raise Exception("Agent has no attribute 'actor'")
+        action, action_logprob = self.actor.get_action(state)
+        return action, action_logprob
 
-    @staticmethod
-    def random_choice_prob_index(p, axis=1):
-        r = np.expand_dims(np.random.rand(p.shape[1 - axis]), axis=axis)
-        return (p.cumsum(axis=axis) > r).argmax(axis=axis)
+    def generate_advantages( self, rewards=None, values=None, dones=None ):
+        rewards = self.memory.rewards if rewards is None else rewards
+        values  = self.memory.values  if  values is None else values
+        dones   = self.memory.dones   if   dones is None else dones
+        
+        advantages = np.zeros(len(rewards), dtype=np.float32)
+        advantages[-1] = rewards[-1] - values[-1]
+        for t in range( len(rewards)-2, -1, -1 ):
+            advantages[t] += rewards[t] - values[t] 
+            advantages[t] += self.reward_decay*self.gae_lambda*advantages[t+1]
+            if not dones[t]:
+                advantages[t] += self.reward_decay*values[t+1]
+        advantages = torch.tensor(advantages).to(self.device)
 
-    def compute_intrinsic_reward(self, state, next_state, action):
-        state = torch.FloatTensor(state).to(self.device)
-        next_state = torch.FloatTensor(next_state).to(self.device)
-        action = torch.LongTensor(action).to(self.device)
+        return advantages
+    
+    def generate_batches(self):
+        n_states = len(self.memory.curr_states) 
+        batch_start = np.arange(0, n_states, self.batch_size) 
+        indices = np.arange(n_states, dtype=np.int64) 
+        np.random.shuffle(indices) 
+        batches = [indices[i:i+self.batch_size] for i in batch_start]
 
-        #commenting the below out as its not required for non images
+        return batches
 
-        action_onehot = torch.FloatTensor(
-            len(action), self.output_size).to(
-            self.device)
-        action_onehot.zero_()
-        action_onehot.scatter_(1, action.view(len(action), -1), 1)
+class S3Agent(Agent):
+    def __init__(self, params:Params):
+        super(S3Agent, self).__init__(params)
 
-        real_next_state_feature, pred_next_state_feature, pred_action = self.s3(
-            [state, next_state, action_onehot])
-        intrinsic_reward = self.eta * F.mse_loss(real_next_state_feature, pred_next_state_feature, reduction='none').mean(-1) ### THIS LINE
-        return intrinsic_reward.data.cpu().numpy()
-    def evaluated_constraint_reward(self, next_state, constarints):
-        #if agent takes action it will find itself in next_state, will the constraints be satisfied?
-        next_state = torch.FloatTensor(next_state).to(self.device)
-        #we need to have access to object distance and velocity etc in here...
-        constraint_reward = self.constarints
-        #TODO ----> FAZL
+        self.actor     = ActorNetwork( params )
+        self.predictor = PredictorNetwork( params )
+        self.critic    = CriticNetwork( params )
+    
+    def learn(self):
+        # prepare advantages and other tensors used for training
+        memory = self.memory.prepare()
+        advantages_arr = self.generate_advantages()
+        advantages_arr = advantages_arr - memory.rewards
 
-        return constraint_reward.data.cpu().numpy()
+        # begin training loops
+        for _ in range(self.params.n_epochs):
+            batches = self.generate_batches()
 
-    def train_model(self, s_batch, next_s_batch, target_batch, y_batch, adv_batch, old_policy):
-        s_batch = torch.FloatTensor(s_batch).to(self.device)
-        next_s_batch = torch.FloatTensor(next_s_batch).to(self.device)
-        target_batch = torch.FloatTensor(target_batch).to(self.device)
-        y_batch = torch.LongTensor(y_batch).to(self.device)
-        adv_batch = torch.FloatTensor(adv_batch).to(self.device)
+            for batch in batches:
+                # get required info from batches
+                curr_states  = memory.curr_states[batch]
+                next_states  = memory.next_states[batch]
+                old_logprobs = memory.logprobs[batch]
+                actions      = memory.actions[batch]
+                rewards      = memory.rewards[batch]
+                values       = memory.values[batch]
+                advantages   = advantages_arr[batch]
 
-        sample_range = np.arange(len(s_batch))
-        ce = nn.CrossEntropyLoss()
-        forward_mse = nn.MSELoss()
+                # train in two separate steps.
+                # Train the predictor
+                pred_states = self.predictor(curr_states, actions)
+                predictor_loss = torch.nn.HuberLoss("mean")(next_states, pred_states)
+                self.predictor.optimizer.zero_grad()
+                predictor_loss.backward()
+                self.predictor.optimizer.step()
 
-        with torch.no_grad():
-            policy_old_list = torch.stack(old_policy).permute(1, 0, 2).contiguous().view(-1, self.output_size).to(
-                self.device)
+                # Train the actor and critic
+                # run the models
+                new_logprobs, entropies = self.actor.calculate_entropy(curr_states, actions)
+                pred_states  = self.predictor(curr_states, actions)
+                critic_value = self.critic(pred_states)
 
-            m_old = Categorical(F.softmax(policy_old_list, dim=-1))
-            log_prob_old = m_old.log_prob(y_batch)
-            # ------------------------------------------------------------
+                # calculate actor loss
+                prob_ratio = ( new_logprobs - old_logprobs ).exp()
+                clip = self.params.policy_clip
+                weighted_probs = advantages * prob_ratio
+                weighted_clipped_probs = torch.clamp(prob_ratio, 1-clip,1+clip)*advantages
+                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
 
-        for i in range(self.epoch):
-            np.random.shuffle(sample_range)
-            for j in range(int(len(s_batch) / self.batch_size)):
-                sample_idx = sample_range[self.batch_size * j:self.batch_size * (j + 1)]
+                # calculate critic loss
+                returns = advantages + values - rewards
+                critic_loss = torch.nn.HuberLoss("mean")(returns, critic_value)
 
-                # --------------------------------------------------------------------------------
-                # for Curiosity-driven
-                action_onehot = torch.FloatTensor(self.batch_size, self.output_size).to(self.device)
-                action_onehot.zero_()
-                action_onehot.scatter_(1, y_batch[sample_idx].view(-1, 1), 1)
-                real_next_state_feature, pred_next_state_feature, pred_action = self.s3(
-                    [s_batch[sample_idx], next_s_batch[sample_idx], action_onehot])
+                # backprop the loss
+                total_loss = actor_loss + 0.5*critic_loss - 0.01*entropies.mean() 
+                self.actor.optimizer.zero_grad()
+                self.critic.optimizer.zero_grad()
+                self.predictor.optimizer.zero_grad()
+                total_loss.backward()
+                self.actor.optimizer.step()
+                self.critic.optimizer.step()
 
-                inverse_loss = ce(
-                    pred_action, y_batch[sample_idx])
+        self.memory.clear_memory() 
 
-                forward_loss = forward_mse(
-                    pred_next_state_feature, real_next_state_feature.detach())
-                # ---------------------------------------------------------------------------------
+        losses = { 'actor': actor_loss, 'critic': critic_loss, "predictor": predictor_loss }
+        return losses
 
-                policy, value = self.model(s_batch[sample_idx])
-                m = Categorical(F.softmax(policy, dim=-1))
-                log_prob = m.log_prob(y_batch[sample_idx])
-                #eval const - using sat/wmc. [TODO -> Fazl]
-                ratio = torch.exp(log_prob - log_prob_old[sample_idx])
+# not yet working
+class ActorCriticAgent( Agent ):
+       
+    def __init__(self, params:Params):
+        super(ActorCriticAgent, self).__init__(params)
 
-                surr1 = ratio * adv_batch[sample_idx]
-                surr2 = torch.clamp(
-                    ratio,
-                    1.0 - self.ppo_eps,
-                    1.0 + self.ppo_eps) * adv_batch[sample_idx]
+        self.actor  = ActorNetwork( params )
+        self.critic = CriticNetwork( params )
+ 
+    def learn(self):
+        # prepare advantages and other tensors used for training
+        memory = self.memory.prepare()
+        advantages_arr = self.generate_advantages()
 
-                actor_loss = -torch.min(surr1, surr2).mean()
-                critic_loss = F.mse_loss(
-                    value.sum(1), target_batch[sample_idx])
+        # begin training loops
+        for _ in range(self.params.n_epochs):
+            batches = self.generate_batches()
 
-                entropy = m.entropy().mean()
+            for batch in batches:
+                # get required info from batches
+                states       = memory.curr_states[batch]
+                old_logprobs = memory.logprobs[batch]
+                actions      = memory.actions[batch]
+                values       = memory.values[batch]
+                advantages   = advantages_arr[batch]
 
-                self.optimizer.zero_grad()
-                loss = (actor_loss + 0.5 * critic_loss - 0.001 * entropy) + forward_loss + inverse_loss
-                loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-                self.optimizer.step()
+                # run the models
+                new_logprobs, entropies = self.actor.calculate_entropy(states, actions)
+                critic_value = self.critic(states)
+
+                # calculate actor loss
+                prob_ratio = ( new_logprobs - old_logprobs ).exp()
+                clip = self.params.policy_clip
+                weighted_probs = advantages * prob_ratio
+                weighted_clipped_probs = torch.clamp(prob_ratio, 1-clip,1+clip)*advantages
+                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
+
+                # calculate critic loss
+                returns = advantages + values
+                critic_loss = torch.nn.HuberLoss()(returns, critic_value)
+                critic_loss = critic_loss.mean()
+
+                # backprop the loss
+                total_loss = actor_loss + 0.5*critic_loss - 0.01*entropies.mean() 
+                self.actor.optimizer.zero_grad()
+                self.critic.optimizer.zero_grad()
+                total_loss.backward()
+                self.actor.optimizer.step()
+                self.critic.optimizer.step()
+
+        self.memory.clear_memory() 
+
+        losses = { 'actor': actor_loss, 'critic': critic_loss }
+        return losses

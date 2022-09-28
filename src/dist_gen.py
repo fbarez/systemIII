@@ -30,7 +30,8 @@ class get_distance(object):
                         action_sampler: Optional[Callable] = None,
                         curr_state: Optional[torch.Tensor] = None,
                         num_iter: int = 100,
-                        render: bool  = False ):
+                        render: bool  = False,
+                        prev_score: int = 0):
         """[summary]
         action_sampler: function that takes in a state and returns an action
         current_state: the initial state of the rollout
@@ -39,15 +40,17 @@ class get_distance(object):
         """
         zero = lambda : torch.tensor(0)
         agent_has = lambda attr : hasattr(self.agent, attr)
+        scores = [ prev_score ]
 
+        # if no agent provided, use a random action sampler
+        if action_sampler is None:
+            action_sampler = self.random_action_sampler
+
+        # initialise state
+        if curr_state is None:
+            curr_state = self.memory.flatten_state( self.env.reset() )
+        
         with torch.no_grad():
-            # if no agent provided, use a random action sampler
-            if action_sampler is None:
-                action_sampler = self.random_action_sampler
-            
-            # initialise state
-            if curr_state is None:
-                curr_state = env.reset()
             
             for _ in range(num_iter):
                 # Get the next state
@@ -55,11 +58,12 @@ class get_distance(object):
                 [ next_state, reward, done, info ] = self.env.step(np.array( action ))
                 next_state = self.memory.flatten_state(next_state)
                 value = self.agent.critic(curr_state) if agent_has('critic') else zero()
-                pred_state = self.agent.predictor(curr_state) if agent_has('predictor') else zero()
+                pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
 
                 # Store the transition
                 self.memory.add(curr_state, next_state, pred_state, 
                                 action, action_logprob, reward, value, done)
+                scores[-1] += reward
 
                 if render:
                     self.env.render()
@@ -67,10 +71,12 @@ class get_distance(object):
                 # get things ready for next loop
                 if done:
                     curr_state = self.memory.flatten_state( self.env.reset() )
+                    scores.append(0)
                 else:
                     curr_state = next_state
 
-            return curr_state
+            assert type(curr_state) is torch.Tensor
+            return curr_state, scores
 
 
     def extract_distances(self, observations):

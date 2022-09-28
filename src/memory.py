@@ -32,13 +32,16 @@ class Memory:
 
         return True
 
+    def tensorify(self, array):
+        return torch.stack([torch.tensor(a) for a in array]).float().to(self.device)
+
     def prepare(self):
         self.curr_states = torch.stack(self.curr_states).to(self.device)
         self.next_states = torch.stack(self.next_states).to(self.device)
         self.pred_states = torch.stack(self.pred_states).to(self.device)
         self.actions = torch.stack(self.actions).to(self.device)
         self.logprobs = torch.stack(self.logprobs).to(self.device)
-        self.rewards = np.array(self.rewards)
+        self.rewards = self.tensorify(self.rewards)
         self.values = torch.stack(self.values).to(self.device)
         self.dones = np.array(self.dones)
 

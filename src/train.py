@@ -1,249 +1,150 @@
-from agents import *
-from envs import *
+#from agents import *
+#from envs import *
 from utils import *
 from config import *
 from torch.multiprocessing import Pipe
+from agents import S3Agent, ActorCriticAgent
+from world import CreateWorld
+from params import Params
 
 from tensorboardX import SummaryWriter
 
 import numpy as np
 import copy
-def main():
-    print({section: dict(config[section]) for section in config.sections()})
-    train_method = default_config['TrainMethod']
-    env_id = default_config['EnvID']
-    env_type = default_config['EnvType']
+import torch
+import time
+from dist_gen import get_distance
+from memory import Memory
+import gym
+import csv
+import argparse
 
-    if env_type == 'mario':
-        env = BinarySpaceToDiscreteSpaceEnv(gym_super_mario_bros.make(env_id), COMPLEX_MOVEMENT)
-    elif env_type == 'atari':
-        env = gym.make(env_id)
+import matplotlib.pyplot as plt
+from plot import plot_scores
+
+def main( game_mode:str, agent_type:str ):
+
+    if game_mode == "car":
+        env = CreateWorld()
+        num_episodes = 300
+        num_iter = 2048
+        batch_size = 64
+        num_epochs = 10
+        actions_continuous = True
+
+    elif game_mode == "cartpole":
+        env = gym.make('CartPole-v0')
+        num_episodes = 300
+        num_iter = 20
+        batch_size = 5
+        num_epochs = 4
+        actions_continuous = False
+
     else:
-        raise NotImplementedError
-    input_size = env.observation_space.shape  # 4
-    output_size = env.action_space.n  # 2
+        raise ValueError("game_mode must be 'car' or 'cartpole'")
 
-    if 'Breakout' in env_id:
-        output_size -= 1
+    # initialise the world state
+    curr_state = env.reset()
 
-    env.close()
+    curr_state, state_mapping = Memory().flatten_state( env.reset(), return_mapping=True )
+    print( state_mapping )
 
-    is_load_model = False
-    is_render = False
-    model_path = 'models/{}.model'.format(env_id)
-    icm_path = 'models/{}.icm'.format(env_id)
-
-    writer = SummaryWriter()
+    state_size  = curr_state.size()[0]
+    if actions_continuous: 
+        action_size = env.action_space.sample().size 
+    else:
+        action_size = env.action_space.n
+    print("state_size:  ", state_size)
+    print("action_size: ", action_size)
 
     use_cuda = default_config.getboolean('UseGPU')
-    use_gae = default_config.getboolean('UseGAE')
-    use_noisy_net = default_config.getboolean('UseNoisyNet')
 
-    lam = float(default_config['Lambda'])
-    num_worker = int(default_config['NumEnv'])
-
-    num_step = int(default_config['NumStep'])
-
-    ppo_eps = float(default_config['PPOEps'])
-    epoch = int(default_config['Epoch'])
-    mini_batch = int(default_config['MiniBatch'])
-    batch_size = int(num_step * num_worker / mini_batch)
-    learning_rate = float(default_config['LearningRate'])
-    entropy_coef = float(default_config['Entropy'])
-    gamma = float(default_config['Gamma'])
-    eta = float(default_config['ETA'])
-
-    clip_grad_norm = float(default_config['ClipGradNorm'])
-
-    reward_rms = RunningMeanStd()
-    obs_rms = RunningMeanStd(shape=(1, 4, 84, 84))
-
-    pre_obs_norm_step = int(default_config['ObsNormStep'])
-    discounted_reward = RewardForwardFilter(gamma)
-
-    agent = S3Agent
-
-    if default_config['EnvType'] == 'atari':
-        env_type = AtariEnvironment
-    elif default_config['EnvType'] == 'mario':
-        env_type = MarioEnvironment
+    if agent_type == "s3":
+        agent = S3Agent
+    elif agent_type == "ac":
+        agent = ActorCriticAgent
     else:
-        raise NotImplementedError
+        raise ValueError("Invalid agent type")
 
-    agent = agent(
-        input_size,
-        output_size,
-        num_worker,
-        num_step,
-        gamma,
-        lam=lam,
-        learning_rate=learning_rate,
-        ent_coef=entropy_coef,
-        clip_grad_norm=clip_grad_norm,
-        epoch=epoch,
+    params = Params(
+        state_size=state_size,
+        action_size=action_size,
+        hidden_size1=256,
+        hidden_size2=256,
+        actions_continuous=actions_continuous,
+        learning_rate=0.0003,
+        reward_decay=0.99,
+        gae_lambda=0.95,
+        policy_clip=0.2,
+        action_std_init=0.4,
         batch_size=batch_size,
-        ppo_eps=ppo_eps,
-        eta=eta,
-        use_cuda=use_cuda,
-        use_gae=use_gae,
-        use_noisy_net=use_noisy_net
+        n_epochs=num_epochs,
+        use_cuda=use_cuda
     )
 
-    if is_load_model:
-        if use_cuda:
-            agent.model.load_state_dict(torch.load(model_path))
-        else:
-            agent.model.load_state_dict(torch.load(model_path, map_location='cpu'))
+    agent = agent(params)
 
-    works = []
-    parent_conns = []
-    child_conns = []
-    for idx in range(num_worker):
-        parent_conn, child_conn = Pipe()
-        work = env_type(env_id, is_render, idx, child_conn)
-        work.start()
-        works.append(work)
-        parent_conns.append(parent_conn)
-        child_conns.append(child_conn)
+    runner = get_distance( env, agent )
 
-    states = np.zeros([num_worker, 4, 84, 84])
+    episode = 0
+    render = False
+    scores = [0]
+    all_scores = []
+    t0 = time.time()
 
-    sample_episode = 0
-    sample_rall = 0
-    sample_step = 0
-    sample_env_idx = 0
-    sample_i_rall = 0
-    global_update = 0
-    global_step = 0
-
-    # normalize obs
-    print('Start to initailize observation normalization parameter.....')
-    next_obs = []
-    steps = 0
-    while steps < pre_obs_norm_step:
-        steps += num_worker
-        actions = np.random.randint(0, output_size, size=(num_worker,))
-
-        for parent_conn, action in zip(parent_conns, actions):
-            parent_conn.send(action)
-
-        for parent_conn in parent_conns:
-            s, r, d, rd, lr = parent_conn.recv()
-            next_obs.append(s[:])
-
-    next_obs = np.stack(next_obs)
-    obs_rms.update(next_obs)
-    print('End to initalize...')
-
-    while True:
-        total_state, total_reward, total_done, total_next_state, total_action, total_int_reward, total_next_obs, total_values, total_policy = \
-            [], [], [], [], [], [], [], [], []
-        global_step += (num_worker * num_step)
-        global_update += 1
-
+    while episode < num_episodes:
         # Step 1. n-step rollout
-        for _ in range(num_step):
-            actions, value, policy = agent.get_action((states - obs_rms.mean) / np.sqrt(obs_rms.var))
+        curr_state, scores = runner.n_step_rollout( agent.choose_action,
+            curr_state, num_iter, render, prev_score=scores[-1] )
 
-            for parent_conn, action in zip(parent_conns, actions):
-                parent_conn.send(action)
+        # step 2. get some info
+        num_dones = np.sum( agent.memory.dones )
 
-            next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
-            for parent_conn in parent_conns:
-                s, r, d, rd, lr = parent_conn.recv()
-                next_states.append(s)
-                rewards.append(r)
-                dones.append(d)
-                real_dones.append(rd)
-                log_rewards.append(lr)
+        # Step 3. Learn
+        losses = agent.learn()
+        losses = { k:round(float(v),2) for k,v in losses.items()}        
 
-            next_states = np.stack(next_states)
-            rewards = np.hstack(rewards)
-            dones = np.hstack(dones)
-            real_dones = np.hstack(real_dones)
+        if agent.params.actions_continuous:
+            agent.decay_action_std(0.01, 0.1)
 
-            # total reward = int reward
-            intrinsic_reward = agent.compute_intrinsic_reward(
-                (states - obs_rms.mean) / np.sqrt(obs_rms.var),
-                (next_states - obs_rms.mean) / np.sqrt(obs_rms.var),
-                actions)
-            sample_i_rall += intrinsic_reward[sample_env_idx]
+        for i, score in enumerate(scores[:-1]):
+            episode += 1
+            all_scores.append(round(score, 3))
+            if i == num_dones-1:
+                print('episode', episode, 'score %.2f' % score, '\tlosses', losses )
+                
+                if time.time() - t0 > 10:
+                    t0 = time.time()
+                    render = episode
+                elif render != episode:
+                    render = False 
+            else:
+                print('episode', episode, 'score %.2f' % scores[i] )
 
-            total_int_reward.append(intrinsic_reward)
-            total_state.append(states)
-            total_next_state.append(next_states)
-            total_reward.append(rewards)
-            total_done.append(dones)
-            total_action.append(actions)
-            total_values.append(value)
-            total_policy.append(policy)
+        render = False
 
-            states = next_states[:, :, :, :]
+    print("Finished training")
 
-            sample_rall += log_rewards[sample_env_idx]
+    # generate unique string for this run
+    time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
+    run_name = f"scores-{game_mode}-{agent_type}-{time_str}"
 
-            sample_step += 1
-            if real_dones[sample_env_idx]:
-                sample_episode += 1
-                writer.add_scalar('data/reward_per_epi', sample_rall, sample_episode)
-                writer.add_scalar('data/reward_per_rollout', sample_rall, global_update)
-                writer.add_scalar('data/step', sample_step, sample_episode)
-                sample_rall = 0
-                sample_step = 0
-                sample_i_rall = 0
+    # save the scores from this run
+    print( all_scores )
+    with open(f"runs/{run_name}.csv", "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(all_scores)
 
-        # calculate last next value
-        _, value, _ = agent.get_action((states - obs_rms.mean) / np.sqrt(obs_rms.var))
-        total_values.append(value)
-        # --------------------------------------------------
-
-        total_state = np.stack(total_state).transpose([1, 0, 2, 3, 4]).reshape([-1, 4, 84, 84])
-        total_next_state = np.stack(total_next_state).transpose([1, 0, 2, 3, 4]).reshape([-1, 4, 84, 84])
-        total_action = np.stack(total_action).transpose().reshape([-1])
-        total_done = np.stack(total_done).transpose()
-        total_values = np.stack(total_values).transpose()
-        total_logging_policy = torch.stack(total_policy).view(-1, output_size).cpu().numpy()
-
-        # Step 2. calculate intrinsic reward
-        # running mean intrinsic reward
-        total_int_reward = np.stack(total_int_reward).transpose()
-        total_reward_per_env = np.array([discounted_reward.update(reward_per_step) for reward_per_step in
-                                         total_int_reward.T])
-        mean, std, count = np.mean(total_reward_per_env), np.std(total_reward_per_env), len(total_reward_per_env)
-        reward_rms.update_from_moments(mean, std ** 2, count)
-
-        # normalize intrinsic reward
-        total_int_reward /= np.sqrt(reward_rms.var)
-        writer.add_scalar('data/int_reward_per_epi', np.sum(total_int_reward) / num_worker, sample_episode)
-        writer.add_scalar('data/int_reward_per_rollout', np.sum(total_int_reward) / num_worker, global_update)
-        # -------------------------------------------------------------------------------------------
-
-        # logging Max action probability
-        writer.add_scalar('data/max_prob', softmax(total_logging_policy).max(1).mean(), sample_episode)
-
-        # Step 3. make target and advantage
-        target, adv = make_train_data(total_int_reward,
-                                      np.zeros_like(total_int_reward),
-                                      total_values,
-                                      gamma,
-                                      num_step,
-                                      num_worker)
-
-        adv = (adv - np.mean(adv)) / (np.std(adv) + 1e-8)
-        # -----------------------------------------------
-
-        # Step 5. Training!
-        agent.train_model((total_state - obs_rms.mean) / np.sqrt(obs_rms.var),
-                          (total_next_state - obs_rms.mean) / np.sqrt(obs_rms.var),
-                          target, total_action,
-                          adv,
-                          total_policy)
-
-        if global_step % (num_worker * num_step * 100) == 0:
-            print('Now Global Step :{}'.format(global_step))
-            torch.save(agent.model.state_dict(), model_path)
-            torch.save(agent.icm.state_dict(), icm_path)
+    # plot the scores
+    fig = plot_scores( all_scores, window_size=10 )
+    plt.savefig( f"figs/{run_name}.png", dpi=300 )
+    plt.show()
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--game_mode', type=str, default='cartpole')
+    parser.add_argument('--agent_type', type=str, default='ac')
+
+    args = parser.parse_args()
+    main( args.game_mode, args.agent_type )
