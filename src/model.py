@@ -10,6 +10,17 @@ from params import Params
 import os
 
 from torch.distributions import MultivariateNormal, Categorical
+# for some reason, the following do not work be default
+class Categorical(Categorical):
+    @property
+    def mode(self):
+        return self.probs.argmax(dim=-1)
+
+class MultivariateNormal(MultivariateNormal):
+    @property
+    def mode(self):
+        return self.loc
+
 
 class ActorNetwork(nn.Module):
     def __init__(self, params:Params):
@@ -19,9 +30,7 @@ class ActorNetwork(nn.Module):
         p = params
         self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
-        self.checkpoint_file = os.path.join(
-            p.checkpoint_dir, p.model_name+'_actor'
-        )
+        self.update_checkpoint(p)
         self.actions_continuous = p.actions_continuous
 
         self.action_size = p.action_size
@@ -66,10 +75,14 @@ class ActorNetwork(nn.Module):
 
         return distribution
 
-    def get_action(self, state):
+    def get_action(self, state, training=True):
         distribution = self.forward(state)
 
-        action = distribution.sample()
+        if training:
+            action = distribution.sample()
+        else:
+            action = distribution.mode
+        
         action_logprob = distribution.log_prob(action)
 
         return action, action_logprob
@@ -85,6 +98,11 @@ class ActorNetwork(nn.Module):
     def set_action_std(self, new_action_std):
         self.action_var = torch.full((self.action_size,), new_action_std * new_action_std).to(self.device)
 
+    def update_checkpoint(self, params:Params):
+        self.checkpoint_file = os.path.join(
+            params.checkpoint_dir, params.agent_type+'_actor_'+params.instance_name
+        )
+
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)
 
@@ -96,9 +114,7 @@ class PredictorNetwork(nn.Module):
         super(PredictorNetwork, self).__init__()
         p = params
 
-        self.checkpoint_file = os.path.join(
-            p.checkpoint_dir, p.model_name+'_predictor'
-        )
+        self.update_checkpoint(p)
         self.predictor = nn.Sequential(
                 nn.Linear(p.state_size+p.action_size, p.hidden_size1),
                 nn.LeakyReLU(),
@@ -117,9 +133,15 @@ class PredictorNetwork(nn.Module):
             actions = torch.nn.functional.one_hot(actions,
                 num_classes=self.action_size).float()
 
+        # residual predictor
         inputs =  torch.cat((prev_states, actions), dim).float()
         pred_next_states = self.predictor(inputs) + prev_states
         return pred_next_states
+
+    def update_checkpoint(self, params:Params):
+        self.checkpoint_file = os.path.join(
+            params.checkpoint_dir, params.agent_type+'_predictor_'+params.instance_name
+        )
 
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)
@@ -132,9 +154,7 @@ class CriticNetwork(nn.Module):
         super(CriticNetwork, self).__init__()
         p = params
 
-        self.checkpoint_file = os.path.join(
-            p.checkpoint_dir, p.model_name+'_critic'
-        )
+        self.update_checkpoint(p)
         self.critic = nn.Sequential(
                 nn.Linear(p.state_size, p.hidden_size1),
                 nn.ReLU(),
@@ -151,6 +171,11 @@ class CriticNetwork(nn.Module):
         value = self.critic(state)
         return value
 
+    def update_checkpoint(self, params:Params):
+        self.checkpoint_file = os.path.join(
+            params.checkpoint_dir, params.agent_type+'_critic_'+params.instance_name
+        )
+    
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)
 

@@ -1,4 +1,5 @@
-from typing import Optional
+from tkinter import W
+from typing import Optional, Union
 
 class Params:
     def __init__(self,
@@ -12,11 +13,18 @@ class Params:
             gae_lambda:float=0.95,
             policy_clip:float=0.2,
             action_std_init:float=0.6,
-            batch_size:Optional[int]=None,
-            n_epochs:int=10,
             use_cuda:bool=True,
             checkpoint_dir:str="tmp/model",
-            model_name:str="ppo"
+            instance_name:str="",
+            agent_type:str="ppo",
+            game_mode:str="cartpole",
+            num_timesteps:int=10000,
+            num_iter:int=20,
+            batch_size:int=5,
+            n_epochs:int=4,
+            test_period:int=500,
+            test_iter:int=1000,
+            timestep_length:Union[int,float]=1
             ):
         
         # initialize hyperparameters / config
@@ -32,10 +40,17 @@ class Params:
         self.policy_clip = policy_clip
         self.action_std = action_std_init
 
-        self.batch_size = batch_size
-        self.n_epochs = n_epochs
- 
         self.use_cuda = use_cuda
 
         self.checkpoint_dir = checkpoint_dir
-        self.model_name = model_name
+        self.instance_name = instance_name
+        self.agent_type = agent_type
+        self.game_mode = game_mode
+
+        self.num_timesteps = num_timesteps
+        self.num_iter = num_iter
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.test_period = test_period
+        self.test_iter = test_iter
+        self.timestep_length = timestep_length

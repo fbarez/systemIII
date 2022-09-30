@@ -3,6 +3,7 @@ from re import I
 from tkinter import W
 import numpy as np
 
+import time
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
@@ -29,6 +30,8 @@ class Agent:
         self.batch_size   = self.params.batch_size
         self.action_std   = self.params.action_std
 
+        self.models = []
+
     def set_action_std(self, new_action_std):
         if not hasattr(self, 'actor'):
             raise Exception("Agent has no attribute 'actor'")
@@ -44,25 +47,47 @@ class Agent:
             print("setting actor output action_std to : ", self.action_std)
         self.set_action_std(self.action_std)
 
-    def choose_action( self, state ): 
+    def choose_action( self, state, training=True ): 
         if not hasattr(self, 'actor'):
             raise Exception("Agent has no attribute 'actor'")
-        action, action_logprob = self.actor.get_action(state)
+        action, action_logprob = self.actor.get_action(state, training=training)
         return action, action_logprob
 
-    def generate_advantages( self, rewards=None, values=None, dones=None ):
+    def calculate_cumulative_rewards( self, rewards=None, dones=None ):
         rewards = self.memory.rewards if rewards is None else rewards
-        values  = self.memory.values  if  values is None else values
         dones   = self.memory.dones   if   dones is None else dones
-        
-        advantages = np.zeros(len(rewards), dtype=np.float32)
-        advantages[-1] = rewards[-1] - values[-1]
+
+        cumulative_rewards = np.zeros(len(rewards), dtype=np.float32)
+        cumulative_rewards[-1] = rewards[-1]
         for t in range( len(rewards)-2, -1, -1 ):
-            advantages[t] += rewards[t] - values[t] 
-            advantages[t] += self.reward_decay*self.gae_lambda*advantages[t+1]
+            cumulative_rewards[t] += rewards[t] 
+            cumulative_rewards[t] += self.reward_decay*self.gae_lambda*cumulative_rewards[t+1]
+            #if dones[t]:
+            #    cumulative_rewards[t] = rewards[t]
+        cumulative_rewards = torch.tensor(cumulative_rewards).to(self.device)
+
+        return cumulative_rewards
+    
+    def calculate_cumulative_values(self, values=None, dones=None):
+        values = self.memory.values if values is None else values
+        dones   = self.memory.dones if  dones is None else dones
+
+        cumulative_values = np.zeros(len(values), dtype=np.float32)
+        cumulative_values[-1] = values[-1]
+        for t in range( len(values)-2, -1, -1 ):
+            cumulative_values[t] += values[t]
+            cumulative_values[t] += self.reward_decay*self.gae_lambda*cumulative_values[t+1]
             if not dones[t]:
-                advantages[t] += self.reward_decay*values[t+1]
-        advantages = torch.tensor(advantages).to(self.device)
+                cumulative_values[t] -= self.reward_decay*values[t+1]
+        cumulative_values = torch.tensor(cumulative_values).to(self.device)
+
+        return cumulative_values
+
+    def generate_advantages( self, rewards=None, values=None, dones=None ):
+        cumulative_rewards = self.calculate_cumulative_rewards()
+        cumulative_values  = self.calculate_cumulative_values()
+        
+        advantages = cumulative_rewards - cumulative_values
 
         return advantages
     
@@ -75,19 +100,45 @@ class Agent:
 
         return batches
 
+    def save_models(self):
+        time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
+        self.params.instance_name = time_str
+
+        for model in self.models:
+            model.update_checkpoint(self.params)
+            model.save_checkpoint()
+    
+    def learn(self):
+        raise NotImplementedError
+
 class S3Agent(Agent):
     def __init__(self, params:Params):
         super(S3Agent, self).__init__(params)
 
+        self.name = "s3"
         self.actor     = ActorNetwork( params )
         self.predictor = PredictorNetwork( params )
         self.critic    = CriticNetwork( params )
-    
+
+        self.models = [ self.actor, self.predictor, self.critic ]
+
+    def calculate_constraint( self, state ):
+        return 1
+
+    def calculate_all_constraints(self, states):
+        constraints = torch.zeros(len(states), dtype=torch.float32).to(self.device)
+        for i, state in enumerate(states):
+            constraints[i] = self.calculate_constraint(state)
+        return constraints
+
     def learn(self):
         # prepare advantages and other tensors used for training
         memory = self.memory.prepare()
-        advantages_arr = self.generate_advantages()
-        advantages_arr = advantages_arr - memory.rewards
+        cumulative_rewards = self.calculate_cumulative_rewards()
+        cumulative_values  = self.calculate_cumulative_values()
+        constraints_arr = self.calculate_all_constraints(self.memory.next_states)
+        constrained_rewards = torch.min( cumulative_rewards, cumulative_rewards*constraints_arr )
+        advantages_arr = constrained_rewards - cumulative_values 
 
         # begin training loops
         for _ in range(self.params.n_epochs):
@@ -102,6 +153,7 @@ class S3Agent(Agent):
                 rewards      = memory.rewards[batch]
                 values       = memory.values[batch]
                 advantages   = advantages_arr[batch]
+                constraints  = constraints_arr[batch]
 
                 # train in two separate steps.
                 # Train the predictor
@@ -115,7 +167,7 @@ class S3Agent(Agent):
                 # run the models
                 new_logprobs, entropies = self.actor.calculate_entropy(curr_states, actions)
                 pred_states  = self.predictor(curr_states, actions)
-                critic_value = self.critic(pred_states)
+                critic_value = self.critic(pred_states).squeeze()
 
                 # calculate actor loss
                 prob_ratio = ( new_logprobs - old_logprobs ).exp()
@@ -125,7 +177,8 @@ class S3Agent(Agent):
                 actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
 
                 # calculate critic loss
-                returns = advantages + values - rewards
+                returns = advantages + values.squeeze()
+                returns = torch.min( returns, constraints * returns )
                 critic_loss = torch.nn.HuberLoss("mean")(returns, critic_value)
 
                 # backprop the loss
@@ -139,7 +192,7 @@ class S3Agent(Agent):
 
         self.memory.clear_memory() 
 
-        losses = { 'actor': actor_loss, 'critic': critic_loss, "predictor": predictor_loss }
+        losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }
         return losses
 
 # not yet working
@@ -148,8 +201,11 @@ class ActorCriticAgent( Agent ):
     def __init__(self, params:Params):
         super(ActorCriticAgent, self).__init__(params)
 
+        self.name = "ac"
         self.actor  = ActorNetwork( params )
         self.critic = CriticNetwork( params )
+        
+        self.models = [ self.actor, self.critic ]
  
     def learn(self):
         # prepare advantages and other tensors used for training

@@ -31,7 +31,8 @@ class get_distance(object):
                         curr_state: Optional[torch.Tensor] = None,
                         num_iter: int = 100,
                         render: bool  = False,
-                        prev_score: int = 0):
+                        prev_score: int = 0,
+                        training: bool = False ):
         """[summary]
         action_sampler: function that takes in a state and returns an action
         current_state: the initial state of the rollout
@@ -54,7 +55,7 @@ class get_distance(object):
             
             for _ in range(num_iter):
                 # Get the next state
-                action, action_logprob = action_sampler( curr_state )
+                action, action_logprob = action_sampler( curr_state, training )
                 [ next_state, reward, done, info ] = self.env.step(np.array( action ))
                 next_state = self.memory.flatten_state(next_state)
                 value = self.agent.critic(curr_state) if agent_has('critic') else zero()

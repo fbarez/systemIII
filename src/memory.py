@@ -70,13 +70,13 @@ class Memory:
         self.values = []
         self.dones = [] 
     
-    def flat_get(self, current_state_flat, key):
+    def flat_get(self, current_state_flat:torch.Tensor, key:str):
         if not self.state_mapping:
             raise Exception("mapping not defined")
 
         return current_state_flat[self.state_mapping[key][0]:self.state_mapping[key][1]]
 
-    def map_and_flatten(self, state):
+    def map_and_flatten(self, state:torch.Tensor):
         state_mapping = {}
         state_flat = []
         if type(state) is np.ndarray:
@@ -91,7 +91,7 @@ class Memory:
         state_flat = torch.tensor(state_flat).float().to(self.device)
         return state_flat, state_mapping
 
-    def flatten_state(self, state, return_mapping=False ):
+    def flatten_state(self, state:torch.Tensor, return_mapping:bool=False ):
         if return_mapping:
             return self.map_and_flatten(state)
         
