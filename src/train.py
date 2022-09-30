@@ -9,6 +9,7 @@ from world import CreateWorld
 from params import Params
 
 from tensorboardX import SummaryWriter
+from typing import Optional
 
 import numpy as np
 import copy
@@ -21,7 +22,7 @@ import csv
 import argparse
 
 import matplotlib.pyplot as plt
-from plot import plot_scores
+from plot_scores import plot_scores
 
 def train_model( env, agent:Agent, params:Params ):
     runner = get_distance( env, agent )
@@ -32,29 +33,48 @@ def train_model( env, agent:Agent, params:Params ):
     scores    = [0]
     train_scores = {"t": [], "episode":[], "val": [], "mean": [], "std": []}
     test_scores  = {"t": [], "episode":[], "val": [], "mean": [], "std": []}
+    train_states = []
+    test_states  = []
     t0 = time.time()
 
+    # generate titles for constraints csv
+    curr_state, state_mapping = Memory().flatten_state( env.reset(), return_mapping=True )
+    reverse_mapping = ["" for _ in range(params.state_size)]
+    for key, [start,end] in state_mapping.items():
+        for i in range(start, end):
+            reverse_mapping[i] = key+"_"+str(i-start)
+    action_mapping = ["action" if not params.actions_continuous else "action_"+str(i) for i in range(params.action_size)]
+    titles = ["time", "done", "reward", "constraint", *action_mapping, *reverse_mapping ]
+    train_states.append( titles )
+    test_states.append( titles )
 
     # pre-test agent as a zero datapoint
-    def test(save_models=True):
-        curr_state  = Memory().flatten_state( env.reset() )
-        curr_state, scores = runner.n_step_rollout( agent.choose_action,
-            curr_state, params.test_iter, render, training=False )
-        test_scores[ "mean" ].append( np.mean(scores[:-1]) )
-        test_scores[ "std"  ].append( np.std(scores[:-1]) )
-        test_scores[ "t"    ].append( timesteps*params.timestep_length )
-        scores[-1] = 0
-        curr_state  = Memory().flatten_state( env.reset() )
-        print( " -- test scores:", round(test_scores["mean"][-1], 2), "pm", round(test_scores["std"][-1], 2) )
-        if save_models:
-            agent.save_models()
+    test_index  = 0
+    save_models = True
+    
+    print_test_scores = lambda s : print( " -- test scores:", round(s["mean"][-1], 2), "pm", round(s["std"][-1], 2) )
 
-    test(False)
+    # test agent
+    curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
+        curr_state, params.test_iter, render, training=False )
+    test_scores[ "mean" ].append( np.mean(scores[:-1]) )
+    test_scores[ "std"  ].append( np.std(scores[:-1]) )
+    test_scores[ "t"    ].append( timesteps*params.timestep_length )
+    print_test_scores( test_scores )
+    if save_models:
+        agent.save_models()
+    test_states += [ [test_index, *state] for state in state_data ]
+    curr_state  = Memory().flatten_state( env.reset() )
+
+    scores[-1] = 0
+    test_index += 1
+    
 
     while timesteps < params.num_timesteps:
         # Step 1. n-step rollout
-        curr_state, scores = runner.n_step_rollout( agent.choose_action,
+        curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
             curr_state, params.num_iter, render, prev_score=scores[-1], training=True )
+        train_states += [ [timesteps+i, *state] for i, state in enumerate(state_data) ]
         timesteps += params.num_iter
 
         # step 2. get some info
@@ -77,10 +97,27 @@ def train_model( env, agent:Agent, params:Params ):
         
         # Step 5. Test the model to gain insight into performance
         if timesteps % params.test_period == 0:
-            test()
+            # test agent
+            curr_state = Memory().flatten_state( env.reset() )
+            curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
+                curr_state, params.test_iter, render, training=False )
+            test_scores[ "mean" ].append( np.mean(scores[:-1]) )
+            test_scores[ "std"  ].append( np.std(scores[:-1]) )
+            test_scores[ "t"    ].append( timesteps*params.timestep_length )
+            print_test_scores( test_scores )
+            if save_models:
+                agent.save_models()
+            test_states += [ [test_index, *state] for state in state_data ]
+
+            curr_state = Memory().flatten_state( env.reset() )
+            scores[-1] = 0
+            test_index += 1
+        
+        #print( "train states:\n", [ state[3] for state in train_states ])
+        #print( "\ntest states:\n", [ state[3] for state in test_states ] )
 
     print("Finished training")
-    return train_scores, test_scores
+    return train_scores, test_scores, train_states, test_states
 
 def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
     # Choose the environment
@@ -97,9 +134,20 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         timestep_length = 10
 
         class S3AgentConstructor(S3Agent):
-            def calculate_constraint( self, state:torch.Tensor ):
+            def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
                 max_lidar_range = 5
-                hazards_lidar = self.memory.flat_get( state, 'hazards_lidar' )
+                memory = memory if not memory is None else self.memory
+                hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
+                closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
+                hazardous_distance = 0.5
+                constraint = ( 1 - torch.clamp( closest_hazard, 0, hazardous_distance )*(1/hazardous_distance) )
+                return 1 - constraint
+
+        class ActorCriticAgentConstructor(ActorCriticAgent):
+            def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
+                max_lidar_range = 5
+                memory = memory if not memory is None else self.memory
+                hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
                 closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
                 hazardous_distance = 0.5
                 constraint = ( 1 - torch.clamp( closest_hazard, 0, hazardous_distance )*(1/hazardous_distance) )
@@ -124,7 +172,7 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
     if agent_type == "s3":
         agent_constructor = S3AgentConstructor
     elif agent_type == "ac":
-        agent_constructor = ActorCriticAgent
+        agent_constructor = ActorCriticAgentConstructor
     else:
         raise ValueError("Invalid agent type")
 
@@ -162,22 +210,26 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
 
     train_scores_log = []
     test_scores_log  = []
+    train_states_log = []
+    test_states_log  = []
     for _ in range(num_agents_to_train):
         # run the training
         agent = agent_constructor(params)
-        train_scores, test_scores = train_model( env, agent, params ) 
+        train_scores, test_scores, train_states, test_states = train_model( env, agent, params ) 
 
         # generate unique string for this run
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
-        run_name = f"scores-{game_mode}-{agent_type}-{time_str}"
+        run_name = f"{game_mode}-{agent_type}-{time_str}"
 
-        test_scores_log.append( test_scores )
         train_scores_log.append( train_scores )
+        test_scores_log.append( test_scores )
+        train_states_log.append( train_states )
+        test_states_log.append( test_states )
 
         for score_data, name in [(train_scores, "training"), (test_scores, "test")]:
             # save the scores from this run
             print( score_data )
-            with open(f"runs/{name}-{run_name}.csv", "w") as f:
+            with open(f"runs/{name}-scores-{run_name}.csv", "w") as f:
                 writer = csv.writer(f)
                 for label, data in score_data.items():
                     writer.writerow([label] + data)
@@ -185,6 +237,13 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
             # plot the scores
             fig = plot_scores( score_data, window_size=10 )
             plt.savefig( f"figs/{name}-{run_name}.png", dpi=300 )
+
+        for state_data, name in [(train_states, "training"), (test_states, "test")]:
+            # save the states from this run
+            with open(f"runs/{name}-states-{run_name}.csv", "w") as f:
+                writer = csv.writer(f)
+                for state in state_data:
+                    writer.writerow(state)
 
     test_scores_dict = {
         "mean": np.mean( [ d["mean"] for d in test_scores_log ], axis=0 ),

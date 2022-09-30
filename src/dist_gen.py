@@ -50,9 +50,9 @@ class get_distance(object):
         # initialise state
         if curr_state is None:
             curr_state = self.memory.flatten_state( self.env.reset() )
-        
+
+        state_data = []        
         with torch.no_grad():
-            
             for _ in range(num_iter):
                 # Get the next state
                 action, action_logprob = action_sampler( curr_state, training )
@@ -60,10 +60,11 @@ class get_distance(object):
                 next_state = self.memory.flatten_state(next_state)
                 value = self.agent.critic(curr_state) if agent_has('critic') else zero()
                 pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
+                constraint = self.agent.calculate_constraint(next_state) if agent_has('calculate_constraint') else zero()
 
                 # Store the transition
                 self.memory.add(curr_state, next_state, pred_state, 
-                                action, action_logprob, reward, value, done)
+                                action, action_logprob, reward, value, constraint, done)
                 scores[-1] += reward
 
                 if render:
@@ -76,9 +77,10 @@ class get_distance(object):
                 else:
                     curr_state = next_state
 
-            assert type(curr_state) is torch.Tensor
-            return curr_state, scores
+                state_data.append([ done, reward, float(constraint), *action.cpu().numpy(), 0, *next_state.cpu().numpy() ])
 
+            assert type(curr_state) is torch.Tensor
+            return curr_state, scores, state_data
 
     def extract_distances(self, observations):
         '''

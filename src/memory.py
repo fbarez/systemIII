@@ -13,6 +13,7 @@ class Memory:
         self.logprobs = []
         self.rewards = []
         self.values = []
+        self.constraints = []
         self.dones = []
 
     def safety_check(self):
@@ -24,6 +25,7 @@ class Memory:
             self.logprobs,
             self.rewards,
             self.values,
+            self.constraints,
             self.dones
         ]
         L = len(arrays[0])
@@ -43,13 +45,14 @@ class Memory:
         self.logprobs = torch.stack(self.logprobs).to(self.device)
         self.rewards = self.tensorify(self.rewards)
         self.values = torch.stack(self.values).to(self.device)
+        self.constraints = torch.stack(self.constraints).to(self.device)
         self.dones = np.array(self.dones)
 
         # basic check to make sure that each array has the correct number of items
         self.safety_check()
         return self
 
-    def add(self, curr_state, next_state, pred_state, action, action_logprob, reward, value, done):
+    def add(self, curr_state, next_state, pred_state, action, action_logprob, reward, value, constraint, done):
         # Note that here we should only add states that are already flattened
         self.curr_states.append(curr_state)
         self.next_states.append(next_state)
@@ -58,6 +61,7 @@ class Memory:
         self.logprobs.append(action_logprob)
         self.rewards.append(reward)
         self.values.append(value)
+        self.constraints.append(constraint)
         self.dones.append(done)
 
     def clear_memory(self):
@@ -68,6 +72,7 @@ class Memory:
         self.logprobs = []
         self.rewards = []
         self.values = []
+        self.constraints = []
         self.dones = [] 
     
     def flat_get(self, current_state_flat:torch.Tensor, key:str):
