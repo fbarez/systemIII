@@ -86,13 +86,13 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
     # Choose the environment
     if game_mode == "car":
         env = CreateWorld()
-        num_timesteps = 256*1024
+        num_timesteps = 128*1024
 
         actions_continuous = True
         num_iter    = 2048
         batch_size  = 64
         num_epochs  = 10
-        test_period = 2048*10
+        test_period = 2048*2
         test_iter   = 2048
         timestep_length = 10
 
