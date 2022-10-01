@@ -110,11 +110,9 @@ if __name__ == '__main__':
             "val":  [],
             "episode": [],
         }
-        test_scores_dict["mean"] = p.Series(test_scores_dict["mean"]).rolling(window=10, min_periods=1).mean()
-        test_scores_dict["std"]  = p.Series(test_scores_dict["std"] ).rolling(window=10, min_periods=1).mean()
         # plot the scores
         print( data_list, test_scores_dict )
-        fig = plot_scores( test_scores_dict, window_size=10, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
+        fig = plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
 
     plt.legend()
     plt.show()
