@@ -1,6 +1,7 @@
 runs
 figs
 tmp
+diagrams
 
 __pycache__
 src/__pycache__

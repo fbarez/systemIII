@@ -8,8 +8,12 @@ from collections import defaultdict
 import argparse
 from matplotlib.figure import Figure
 from typing import Optional
+import torch
 
-def constraint_accumulation(data, window_size:int=2048, threshold:float=1):
+def constraint_accumulation(data,
+                            window_size:int=2048,
+                            threshold:float=1
+                            ):
     y = np.max([ threshold - np.array(data["val"]), np.zeros_like(data["val"]) ], axis=0)
     x = np.array(data["t"])
 
@@ -20,7 +24,7 @@ def constraint_accumulation(data, window_size:int=2048, threshold:float=1):
         y_plot.append(np.sum(y[i:i+window_size]))
         i += window_size
     
-    x_plot = x[::window_size]*18
+    x_plot = x[::window_size]
 
     return {
         "t": x_plot,
@@ -39,6 +43,9 @@ def plot_states(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
         y_mean, y_std = np.array(data["mean"]), np.array(data["std"])
         y = np.array(data["val"]) if len(data["val"]) != 0 else None
         rolling = False
+
+        y_mean = p.Series(y_mean).rolling(window=window_size, min_periods=1).mean()
+        y_std  = p.Series(y_std ).rolling(window=window_size, min_periods=1).mean()
     
     elif len(data["val"]) != 0:
         # generate the rolling average of x:
@@ -57,7 +64,6 @@ def plot_states(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     
     if len(data["t"]):
         x, x_label = np.array(data["t"]), "Timesteps"
-        x, x_label = x/10000, "Episodes"
 
     elif len(data["episode"]):
         x, x_label = np.array(data["episode"]), "Episodes"
@@ -90,6 +96,14 @@ def plot_states(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
 
     return fig
 
+
+def calculate_cartpole_constraint( pole_angle ):
+    pole_max = 0.2095
+    hazardous_distance = 0.1
+    angle_remaining = pole_max - np.abs(pole_angle)
+    constraint = ( 1 - np.clip(angle_remaining, 0.0, hazardous_distance)*(1/hazardous_distance) )
+    return 1 - constraint
+
 if __name__ == '__main__':
     # load data file
     parser = argparse.ArgumentParser(description='Plot diagrams.')
@@ -119,16 +133,29 @@ if __name__ == '__main__':
 
             # the rest of the rows containt the data
             data = [row for row in reader]
-            print( "\n", filename, ":\n", data[0] )
+            print( "\n", filename, " of length ", len(data), ":\n", data[0] )
 
             index = 3
-            constraint_data = {"val":[ float(d[index]) for d in data ], "t":[ float(d) for d in range(len(data)) ], "mean":[], "std":[]}
+            vals = [ float(d[index]) for d in data ]
+
+
+            # override for cartpole
+            if 'cartpole' in filename:
+                index = 8
+                angles = np.array([ float(d[index]) for d in data ])
+                vals = calculate_cartpole_constraint( angles )
+                training_step_size = 400
+                test_iter = 1000
+
+            times = np.array([ float(d[0]) for d in data ])*training_step_size
+            constraint_data = {"val": vals, "t": times, "mean":[], "std":[]}
             # print(data)
             # fig = plot_states(constraints, window_size=200, sigmas=1)
-            accum_constraints = constraint_accumulation(constraint_data, window_size=training_step_size, threshold=0.3)
+            accum_constraints = constraint_accumulation(constraint_data, window_size=1000, threshold=1)
             if args.verbose:
                 fig = plot_states(accum_constraints, color=color_map[agent_type], label=label_map[agent_type])
                 fig.canvas.manager.set_window_title(filename)
+
             all_data[agent_type].append( accum_constraints )
 
     plt.show()
@@ -139,7 +166,7 @@ if __name__ == '__main__':
     label_map = {'ppo': 'Proximal Policy Optimization', 's3': 'System 3', 'ac': 'Proximal Policy Optimization'}
     for key, data_list in all_data.items():
         test_states_dict = {
-            "mean": np.mean( [ d["mean"] for d in data_list ], axis=0 ),
+            "mean": np.mean( [ np.array(d["mean"]) for d in data_list ], axis=0 ),
             "std":  np.std(  [ d["mean"] for d in data_list ], axis=0 ),
             "t":    np.mean( [ d["t"]    for d in data_list ], axis=0 ),
             "val":  [],

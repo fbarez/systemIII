@@ -77,7 +77,8 @@ class get_distance(object):
                 else:
                     curr_state = next_state
 
-                state_data.append([ done, reward, float(constraint), *action.cpu().numpy(), 0, *next_state.cpu().numpy() ])
+                actions = torch.stack([action]) if not type(action) is list else action
+                state_data.append([ done, reward, float(constraint), *actions.cpu().numpy(), 0, *next_state.cpu().numpy() ])
 
             assert type(curr_state) is torch.Tensor
             return curr_state, scores, state_data

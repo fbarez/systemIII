@@ -52,7 +52,7 @@ def train_model( env, agent:Agent, params:Params ):
     test_index  = 0
     save_models = True
     
-    print_test_scores = lambda s : print( " -- test scores:", round(s["mean"][-1], 2), "pm", round(s["std"][-1], 2) )
+    print_test_scores = lambda s, t=0 : print( " -- [%6d] test scores:" % t, round(s["mean"][-1], 2), "pm", round(s["std"][-1], 2) )
 
     # test agent
     curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
@@ -60,7 +60,7 @@ def train_model( env, agent:Agent, params:Params ):
     test_scores[ "mean" ].append( np.mean(scores[:-1]) )
     test_scores[ "std"  ].append( np.std(scores[:-1]) )
     test_scores[ "t"    ].append( timesteps*params.timestep_length )
-    print_test_scores( test_scores )
+    print_test_scores( test_scores, 0 )
     if save_models:
         agent.save_models()
     test_states += [ [test_index, *state] for state in state_data ]
@@ -93,7 +93,7 @@ def train_model( env, agent:Agent, params:Params ):
             train_scores[ "val"     ].append( round(score, 3) )
             train_scores[ "episode" ].append( episode )
             loss_info = f'\tlosses {losses}' if i==num_dones-1 else ''
-            print('episode', episode, 'score %.2f' % scores[i], loss_info )
+            #print('episode', episode, 'score %.2f' % scores[i], loss_info )
         
         # Step 5. Test the model to gain insight into performance
         if timesteps % params.test_period == 0:
@@ -104,7 +104,7 @@ def train_model( env, agent:Agent, params:Params ):
             test_scores[ "mean" ].append( np.mean(scores[:-1]) )
             test_scores[ "std"  ].append( np.std(scores[:-1]) )
             test_scores[ "t"    ].append( timesteps*params.timestep_length )
-            print_test_scores( test_scores )
+            print_test_scores( test_scores, timesteps )
             if save_models:
                 agent.save_models()
             test_states += [ [test_index, *state] for state in state_data ]
@@ -132,41 +132,46 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         test_period = 2048*2
         test_iter   = 2048
         timestep_length = 10
+        hidden_size = 256
 
-        class S3AgentConstructor(S3Agent):
-            def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
-                max_lidar_range = 5
-                memory = memory if not memory is None else self.memory
-                hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
-                closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
-                hazardous_distance = 0.5
-                constraint = ( 1 - torch.clamp( closest_hazard, 0, hazardous_distance )*(1/hazardous_distance) )
-                return 1 - constraint
-
-        class ActorCriticAgentConstructor(ActorCriticAgent):
-            def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
-                max_lidar_range = 5
-                memory = memory if not memory is None else self.memory
-                hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
-                closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
-                hazardous_distance = 0.5
-                constraint = ( 1 - torch.clamp( closest_hazard, 0, hazardous_distance )*(1/hazardous_distance) )
-                return 1 - constraint
+        def calculate_constraint( self:Agent, state:torch.Tensor, memory:Optional[Memory]=None ):
+            max_lidar_range = 5
+            memory = memory if not memory is None else self.memory
+            hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
+            closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
+            hazardous_distance = 0.5
+            constraint = ( 1 - torch.clamp( closest_hazard, 0, hazardous_distance )*(1/hazardous_distance) )
+            return 1 - constraint
 
     elif game_mode == "cartpole":
-        env = gym.make('CartPole-v0')
-        num_timesteps = 20000
+        env = gym.make('CartPole-v1')
+        num_timesteps = 100000
 
         actions_continuous = False
-        num_iter    = 20
-        batch_size  = 5
+        num_iter    = 100
+        batch_size  = 20
         num_epochs  = 4
-        test_period = 25*20
+        test_period = 400
         test_iter   = 1000
         timestep_length = 1
+        hidden_size = 64
         
+        def calculate_constraint( self:Agent, state:torch.Tensor, memory:Optional[Memory]=None ):
+            pole_angle, pole_max = state[2], 0.2095
+            hazardous_distance = 0.1
+            angle_remaining = pole_max - torch.abs(pole_angle)
+            constraint = ( 1 - torch.clamp(angle_remaining, 0, hazardous_distance)*(1/hazardous_distance) )
+            return 1 - constraint
+
     else:
         raise ValueError("game_mode must be 'car' or 'cartpole'")
+    
+    class S3AgentConstructor(S3Agent):
+        def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
+            return calculate_constraint( self, state, memory )
+    class ActorCriticAgentConstructor(ActorCriticAgent):
+        def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
+            return calculate_constraint( self, state, memory )
 
     # Choose the Agent
     if agent_type == "s3":
@@ -188,8 +193,8 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
     params = Params(
         state_size=state_size,
         action_size=action_size,
-        hidden_size1=256,
-        hidden_size2=256,
+        hidden_size1=hidden_size,
+        hidden_size2=hidden_size,
         actions_continuous=actions_continuous,
         learning_rate=0.0003,
         reward_decay=0.99,
@@ -236,7 +241,7 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
 
             # plot the scores
             fig = plot_scores( score_data, window_size=10 )
-            plt.savefig( f"figs/{name}-{run_name}.png", dpi=300 )
+            plt.savefig( f"figs/{name}-scores-{run_name}.png", dpi=300 )
 
         for state_data, name in [(train_states, "training"), (test_states, "test")]:
             # save the states from this run
@@ -255,7 +260,7 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
     # plot the scores
     print( test_scores_dict )
     fig = plot_scores( test_scores_dict, window_size=10 )
-    plt.savefig( f"figs/{name}-{run_name}.png", dpi=300 )
+    plt.savefig( f"figs/{name}-scores-mean-over-{num_agents_to_train}-{run_name}.png", dpi=300 )
 
     plt.show()
 

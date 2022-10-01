@@ -17,6 +17,9 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
         y_mean, y_std = np.array(data["mean"]), np.array(data["std"])
         y = np.array(data["val"]) if len(data["val"]) != 0 else None
         rolling = False
+
+        y_mean = p.Series(y_mean).rolling(window=window_size, min_periods=1).mean()
+        y_std  = p.Series(y_std ).rolling(window=window_size, min_periods=1).mean()
     
     elif len(data["val"]) != 0:
         # generate the rolling average of x:
@@ -35,7 +38,6 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     
     if len(data["t"]):
         x, x_label = np.array(data["t"]), "Timesteps"
-        x, x_label = x/10000, "Episodes"
 
     elif len(data["episode"]):
         x, x_label = np.array(data["episode"]), "Episodes"
@@ -108,6 +110,8 @@ if __name__ == '__main__':
             "val":  [],
             "episode": [],
         }
+        test_scores_dict["mean"] = p.Series(test_scores_dict["mean"]).rolling(window=10, min_periods=1).mean()
+        test_scores_dict["std"]  = p.Series(test_scores_dict["std"] ).rolling(window=10, min_periods=1).mean()
         # plot the scores
         print( data_list, test_scores_dict )
         fig = plot_scores( test_scores_dict, window_size=10, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
