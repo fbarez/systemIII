@@ -75,8 +75,12 @@ class ActorNetwork(nn.Module):
 
         return distribution
 
-    def get_action(self, state, training=True):
-        distribution = self.forward(state)
+    def get_action(self, state, training=True, detach=True):
+        if detach:
+            with torch.no_grad():
+                distribution = self.forward(state)
+        else:
+            distribution = self.forward(state)
 
         if training:
             action = distribution.sample()
@@ -84,8 +88,9 @@ class ActorNetwork(nn.Module):
             action = distribution.mode
         
         action_logprob = distribution.log_prob(action)
+        action_mean = distribution.mode
 
-        return action, action_logprob
+        return action, action_logprob, action_mean
 
     def calculate_entropy(self, state, action):
         distribution = self.forward(state)
@@ -96,12 +101,19 @@ class ActorNetwork(nn.Module):
         return action_logprobs, dist_entropy
 
     def set_action_std(self, new_action_std):
+        self.action_std = new_action_std
         self.action_var = torch.full((self.action_size,), new_action_std * new_action_std).to(self.device)
 
     def update_checkpoint(self, params:Params):
         self.checkpoint_file = os.path.join(
             params.checkpoint_dir, params.agent_type+'_actor_'+params.instance_name
         )
+
+    def calculate_kl_divergence(self, states, old_means):
+        with torch.no_grad():
+            new_means = self.forward(states).loc
+        kl = 0.5 * ( (new_means - old_means)**2 ).sum(axis=-1).mean() / (self.action_std**2 )
+        return kl
 
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)

@@ -24,20 +24,21 @@ import argparse
 import matplotlib.pyplot as plt
 from plot_scores import plot_scores
 
-def train_model( env, agent:Agent, params:Params ):
+def train_model( env, agent:Agent, params:Params, run_name:str ):
     runner = get_distance( env, agent )
     curr_state = Memory().flatten_state( env.reset() )
 
     episode, timesteps = 0, 0
     render    = False
     scores    = [0]
-    train_scores = {"t": [], "episode":[], "val": [], "mean": [], "std": []}
-    test_scores  = {"t": [], "episode":[], "val": [], "mean": [], "std": []}
+    default_scores_dict = lambda : {"t": [], "episode":[], "val": [], "mean": [], "std": []}
+    train_scores = default_scores_dict()
+    test_scores  = default_scores_dict()
     train_states = []
     test_states  = []
     t0 = time.time()
 
-    # generate titles for constraints csv
+    # generate titles for states and constraints csv
     curr_state, state_mapping = Memory().flatten_state( env.reset(), return_mapping=True )
     reverse_mapping = ["" for _ in range(params.state_size)]
     for key, [start,end] in state_mapping.items():
@@ -47,24 +48,31 @@ def train_model( env, agent:Agent, params:Params ):
     titles = ["time", "done", "reward", "constraint", *action_mapping, *reverse_mapping ]
     train_states.append( titles )
     test_states.append( titles )
+    for state_data, name in [(train_states, "training"), (test_states, "test")]:
+        if name == "test" and not params.run_tests:
+            continue
+        # save the states from this run
+        with open(f"runs/{name}-states-{run_name}.csv", "a") as f:
+            writer = csv.writer(f)
+            for state in state_data:
+                writer.writerow(state)
+    train_states, test_states = [], []
 
     # pre-test agent as a zero datapoint
     test_index  = 0
-    save_models = True
     
     print_test_scores = lambda s, t=0 : print( " -- [%6d] test scores:" % t, round(s["mean"][-1], 2), "pm", round(s["std"][-1], 2) )
 
     # test agent
-    curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
-        curr_state, params.test_iter, render, training=False )
-    test_scores[ "mean" ].append( np.mean(scores[:-1]) )
-    test_scores[ "std"  ].append( np.std(scores[:-1]) )
-    test_scores[ "t"    ].append( timesteps*params.timestep_length )
-    print_test_scores( test_scores, 0 )
-    if save_models:
-        agent.save_models()
-    test_states += [ [test_index, *state] for state in state_data ]
-    curr_state  = Memory().flatten_state( env.reset() )
+    if params.run_tests:
+        curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
+            curr_state, params.test_iter, render, training=False )
+        test_scores[ "mean" ].append( np.mean(scores[:-1]) )
+        test_scores[ "std"  ].append( np.std(scores[:-1]) )
+        test_scores[ "t"    ].append( timesteps*params.timestep_length )
+        print_test_scores( test_scores, 0 )
+        test_states += [ [test_index, *state] for state in state_data ]
+        curr_state  = Memory().flatten_state( env.reset() )
 
     scores[-1] = 0
     test_index += 1
@@ -93,10 +101,10 @@ def train_model( env, agent:Agent, params:Params ):
             train_scores[ "val"     ].append( round(score, 3) )
             train_scores[ "episode" ].append( episode )
             loss_info = f'\tlosses {losses}' if i==num_dones-1 else ''
-            #print('episode', episode, 'score %.2f' % scores[i], loss_info )
+            print('episode', episode, 'score %.2f' % scores[i], loss_info )
         
         # Step 5. Test the model to gain insight into performance
-        if timesteps % params.test_period == 0:
+        if timesteps % params.test_period == 0 and params.run_tests:
             # test agent
             curr_state = Memory().flatten_state( env.reset() )
             curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
@@ -105,34 +113,51 @@ def train_model( env, agent:Agent, params:Params ):
             test_scores[ "std"  ].append( np.std(scores[:-1]) )
             test_scores[ "t"    ].append( timesteps*params.timestep_length )
             print_test_scores( test_scores, timesteps )
-            if save_models:
-                agent.save_models()
             test_states += [ [test_index, *state] for state in state_data ]
 
             curr_state = Memory().flatten_state( env.reset() )
             scores[-1] = 0
             test_index += 1
         
-        #print( "train states:\n", [ state[3] for state in train_states ])
-        #print( "\ntest states:\n", [ state[3] for state in test_states ] )
+        # Step 6. Save the model
+        if params.save_period and timesteps % params.save_period == 0:
+            agent.save_models()
 
+        # Step 7. Save logs about the Model
+        for state_data, name in [(train_states, "training"), (test_states, "test")]:
+            if name == "test" and not params.run_tests:
+                continue
+            # save the states from this run
+            with open(f"runs/{name}-states-{run_name}.csv", "a") as f:
+                writer = csv.writer(f)
+                for state in state_data:
+                    writer.writerow(state)
+        
+        train_states, test_states  = [], []
+        
     print("Finished training")
-    return train_scores, test_scores, train_states, test_states
+    return train_scores, test_scores
 
 def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
     # Choose the environment
     if game_mode == "car":
         env = CreateWorld()
-        num_timesteps = 128*1024
+        num_timesteps = 1e7
 
         actions_continuous = True
-        num_iter    = 2048
-        batch_size  = 64
-        num_epochs  = 10
-        test_period = 2048*2
-        test_iter   = 2048
+        num_iter      = 30000
+        batch_size    = 100
+        num_epochs    = 80
+        save_period   = num_iter*5
+        run_tests     = False
+        test_period   = np.Inf
+        test_iter     = 0
         timestep_length = 10
-        hidden_size = 256
+        hidden_size   = 256
+        reward_decay  = 0.99
+        gae_lambda    = 0.97
+        learning_rate = 0.001
+        kl_target     = 0.012
 
         def calculate_constraint( self:Agent, state:torch.Tensor, memory:Optional[Memory]=None ):
             max_lidar_range = 5
@@ -148,13 +173,18 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         num_timesteps = 100000
 
         actions_continuous = False
-        num_iter    = 100
-        batch_size  = 20
-        num_epochs  = 4
-        test_period = 400
-        test_iter   = 1000
+        num_iter      = 100
+        batch_size    = 20
+        num_epochs    = 4
+        save_period   = num_iter*5
+        run_tests     = True
+        test_period   = 400
+        test_iter     = 1000
         timestep_length = 1
-        hidden_size = 64
+        hidden_size   = 64
+        gae_lambda    = 0.95
+        learning_rate = 0.0003
+        kl_target     = 0
         
         def calculate_constraint( self:Agent, state:torch.Tensor, memory:Optional[Memory]=None ):
             pole_angle, pole_max = state[2], 0.2095
@@ -196,11 +226,12 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         hidden_size1=hidden_size,
         hidden_size2=hidden_size,
         actions_continuous=actions_continuous,
-        learning_rate=0.0003,
+        learning_rate=learning_rate,
         reward_decay=0.99,
-        gae_lambda=0.95,
+        gae_lambda=gae_lambda,
         policy_clip=0.2,
         action_std_init=0.4,
+        kl_target=kl_target,
         use_cuda=torch.cuda.is_available(),
         agent_type=agent_type,
         game_mode=game_mode,
@@ -208,31 +239,28 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         num_iter=num_iter,
         batch_size=batch_size,
         n_epochs=num_epochs,
+        run_tests=run_tests,
         test_period=test_period,
         test_iter=test_iter,
         timestep_length=timestep_length,
+        save_period=save_period,
     )
 
     train_scores_log = []
     test_scores_log  = []
-    train_states_log = []
-    test_states_log  = []
     for _ in range(num_agents_to_train):
         # run the training
-        agent = agent_constructor(params)
-        train_scores, test_scores, train_states, test_states = train_model( env, agent, params ) 
-
-        # generate unique string for this run
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
+        agent = agent_constructor(params)
+        train_scores, test_scores = train_model( env, agent, params, run_name ) 
+
         train_scores_log.append( train_scores )
         test_scores_log.append( test_scores )
-        train_states_log.append( train_states )
-        test_states_log.append( test_states )
 
+        # save the scores from this run
         for score_data, name in [(train_scores, "training"), (test_scores, "test")]:
-            # save the scores from this run
             print( score_data )
             with open(f"runs/{name}-scores-{run_name}.csv", "w") as f:
                 writer = csv.writer(f)
@@ -243,13 +271,6 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
             fig = plot_scores( score_data, window_size=10 )
             plt.savefig( f"figs/{name}-scores-{run_name}.png", dpi=300 )
 
-        for state_data, name in [(train_states, "training"), (test_states, "test")]:
-            # save the states from this run
-            with open(f"runs/{name}-states-{run_name}.csv", "w") as f:
-                writer = csv.writer(f)
-                for state in state_data:
-                    writer.writerow(state)
-
     test_scores_dict = {
         "mean": np.mean( [ d["mean"] for d in test_scores_log ], axis=0 ),
         "std":  np.std(  [ d["mean"] for d in test_scores_log ], axis=0 ),
@@ -257,6 +278,7 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         "val":  [],
         "episode": [],
     }
+    
     # plot the scores
     print( test_scores_dict )
     fig = plot_scores( test_scores_dict, window_size=10 )

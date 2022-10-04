@@ -50,8 +50,8 @@ class Agent:
     def choose_action( self, state, training=True ): 
         if not hasattr(self, 'actor'):
             raise Exception("Agent has no attribute 'actor'")
-        action, action_logprob = self.actor.get_action(state, training=training)
-        return action, action_logprob
+        action, action_logprob, action_mean = self.actor.get_action(state, training=training)
+        return action, action_logprob, action_mean
 
     def calculate_cumulative_rewards( self, rewards=None, dones=None ):
         rewards = self.memory.rewards if rewards is None else rewards
@@ -100,6 +100,22 @@ class Agent:
 
         return batches
 
+    def check_kl_early_stop(self, memory:Optional[Memory]=None):
+        if not self.params.kl_target:
+            return False, None
+        if not hasattr(self, 'actor'):
+            raise Exception("Agent has no attribute 'actor'")
+
+        memory = self.memory if memory is None else memory
+        curr_states  = memory.curr_states
+        action_means = memory.action_means
+        
+        kl = self.actor.calculate_kl_divergence( curr_states, action_means )
+        if kl > self.params.kl_target:
+            return True, kl
+        
+        return False, kl
+
     def save_models(self):
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
         self.params.instance_name = time_str
@@ -141,7 +157,7 @@ class S3Agent(Agent):
         advantages_arr = constrained_rewards - cumulative_values 
 
         # begin training loops
-        for _ in range(self.params.n_epochs):
+        for epoch in range(self.params.n_epochs):
             batches = self.generate_batches()
 
             for batch in batches:
@@ -190,6 +206,12 @@ class S3Agent(Agent):
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
 
+            # calculate KL divergence to check for early stopping
+            do_early_stop, kl = self.check_kl_early_stop()
+            if do_early_stop:
+                print("Early stopping at epoch {} with KL divergence {}".format(epoch, kl))
+                break
+        
         self.memory.clear_memory() 
 
         losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }
@@ -213,7 +235,7 @@ class ActorCriticAgent( Agent ):
         advantages_arr = self.generate_advantages()
 
         # begin training loops
-        for _ in range(self.params.n_epochs):
+        for epoch in range(self.params.n_epochs):
             batches = self.generate_batches()
 
             for batch in batches:
@@ -247,6 +269,12 @@ class ActorCriticAgent( Agent ):
                 total_loss.backward()
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
+
+            # calculate KL divergence to check for early stopping
+            do_early_stop, kl = self.check_kl_early_stop()
+            if do_early_stop:
+                print("Early stopping at epoch {} with KL divergence {}".format(epoch, kl))
+                break
 
         self.memory.clear_memory() 
 

@@ -9,6 +9,7 @@ class Memory:
         self.curr_states = []
         self.next_states = []
         self.pred_states = []
+        self.action_means = []
         self.actions = []
         self.logprobs = []
         self.rewards = []
@@ -21,6 +22,7 @@ class Memory:
             self.curr_states,
             self.next_states,
             self.pred_states,
+            self.action_means,
             self.actions,
             self.logprobs,
             self.rewards,
@@ -43,6 +45,7 @@ class Memory:
         self.pred_states = torch.stack(self.pred_states).to(self.device)
         self.actions = torch.stack(self.actions).to(self.device)
         self.logprobs = torch.stack(self.logprobs).to(self.device)
+        self.action_means = torch.stack(self.action_means).to(self.device)
         self.rewards = self.tensorify(self.rewards)
         self.values = torch.stack(self.values).to(self.device)
         self.constraints = torch.stack(self.constraints).to(self.device)
@@ -52,11 +55,12 @@ class Memory:
         self.safety_check()
         return self
 
-    def add(self, curr_state, next_state, pred_state, action, action_logprob, reward, value, constraint, done):
+    def add(self, curr_state, next_state, pred_state, action_mean, action, action_logprob, reward, value, constraint, done):
         # Note that here we should only add states that are already flattened
         self.curr_states.append(curr_state)
         self.next_states.append(next_state)
         self.pred_states.append(pred_state)
+        self.action_means.append(action_mean)
         self.actions.append(action)
         self.logprobs.append(action_logprob)
         self.rewards.append(reward)
@@ -68,6 +72,7 @@ class Memory:
         self.curr_states = []
         self.next_states = []
         self.pred_states = []
+        self.action_means = []
         self.actions = []
         self.logprobs = []
         self.rewards = []

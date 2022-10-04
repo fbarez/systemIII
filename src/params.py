@@ -13,6 +13,7 @@ class Params:
             gae_lambda:float=0.95,
             policy_clip:float=0.2,
             action_std_init:float=0.6,
+            kl_target:float=0,
             use_cuda:bool=True,
             checkpoint_dir:str="tmp/model",
             instance_name:str="",
@@ -22,9 +23,11 @@ class Params:
             num_iter:int=20,
             batch_size:int=5,
             n_epochs:int=4,
+            run_tests:bool=True,
             test_period:int=500,
             test_iter:int=1000,
-            timestep_length:Union[int,float]=1
+            timestep_length:Union[int,float]=1,
+            save_period:int=0,
             ):
         
         # initialize hyperparameters / config
@@ -39,6 +42,7 @@ class Params:
         self.gae_lambda = gae_lambda
         self.policy_clip = policy_clip
         self.action_std = action_std_init
+        self.kl_target = kl_target
 
         self.use_cuda = use_cuda
 
@@ -51,6 +55,9 @@ class Params:
         self.num_iter = num_iter
         self.batch_size = batch_size
         self.n_epochs = n_epochs
+
+        self.run_tests = run_tests
         self.test_period = test_period
         self.test_iter = test_iter
         self.timestep_length = timestep_length
+        self.save_period = save_period

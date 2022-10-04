@@ -23,13 +23,17 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     
     elif len(data["val"]) != 0:
         # generate the rolling average of x:
-        min_periods = np.min([window_size, 10])
+        min_periods = np.min([window_size, 1])
         y = data["val"]
         y_rolling = p.Series(y).rolling(window=window_size, min_periods=min_periods)
         y_mean = y_rolling.mean()
         
         # generate the standard deviation of the rolling average windows:
         y_std = y_rolling.std()
+
+        data["val"]  = np.array(y)
+        data["mean"] = np.array(y_mean)
+        data["std"]  = np.array(y_std)
 
         rolling = True
     
@@ -42,7 +46,8 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     elif len(data["episode"]):
         x, x_label = np.array(data["episode"]), "Episodes"
     else:
-        x = range(len(y))
+        x = np.array(list(range(len(y))))
+        data["t"] = x
 
     # generate the upper and lower bounds of the rolling average windows:
     y_upper = y_mean + (y_std * sigmas)
@@ -67,7 +72,7 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     ax.spines['top'  ].set_visible(False)
     ax.spines['right'].set_visible(False)
 
-    return fig
+    return fig, data
 
 if __name__ == '__main__':
     # load data file
@@ -92,10 +97,11 @@ if __name__ == '__main__':
             # each row has the name of the data in the first column
             # and the data in the next columns
             data = { row[0]:[ float(i) for i in row[1:]] for row in reader }
-            print(data)
             if args.verbose:
-                fig = plot_scores(data, window_size=window_size, sigmas=1)
+                fig, data = plot_scores(data, window_size=window_size, sigmas=1)
                 fig.canvas.manager.set_window_title(filename)
+            data["episode"] = np.array(data["episode"])
+            print(data)
             all_data[agent_type].append(data)
 
     # plot the mean of all data
@@ -103,16 +109,18 @@ if __name__ == '__main__':
     color_map = {'ppo': 'blue', 's3': 'orange', 'ac': 'green'}
     label_map = {'ppo': 'Proximal Policy Optimization', 's3': 'System 3', 'ac': 'Proximal Policy Optimization'}
     for key, data_list in all_data.items():
+        if not len( data_list[0]["mean"] ):
+            continue
         test_scores_dict = {
             "mean": np.mean( [ d["mean"] for d in data_list ], axis=0 ),
             "std":  np.std(  [ d["mean"] for d in data_list ], axis=0 ),
             "t":    np.mean( [ d["t"]    for d in data_list ], axis=0 ),
             "val":  [],
-            "episode": [],
+            "episode": np.mean([ d["episode"] for d in data_list ], axis=0 ),
         }
         # plot the scores
-        print( data_list, test_scores_dict )
-        fig = plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
+        print( data_list, "\n\ntest scores:", test_scores_dict )
+        plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
 
     plt.legend()
     plt.show()

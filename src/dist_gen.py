@@ -14,6 +14,10 @@ from memory import Memory
 from typing import Optional, Callable
 print("ignore...\n")
 
+
+def zero():
+    return torch.tensor(0)
+
 # , 'Position Agent', next_observation['observe_qpos']
 class get_distance(object):
     def __init__(self, env, agent=None):
@@ -24,7 +28,7 @@ class get_distance(object):
 
     def random_action_sampler( self, state ):
         action = self.env.action_space.sample()
-        return action, 0
+        return action, 0, zero()
 
     def n_step_rollout( self,
                         action_sampler: Optional[Callable] = None,
@@ -39,7 +43,6 @@ class get_distance(object):
         num_iter: number of iterations to run the rollout
         render: whether to render the environment
         """
-        zero = lambda : torch.tensor(0)
         agent_has = lambda attr : hasattr(self.agent, attr)
         scores = [ prev_score ]
 
@@ -55,15 +58,16 @@ class get_distance(object):
         with torch.no_grad():
             for _ in range(num_iter):
                 # Get the next state
-                action, action_logprob = action_sampler( curr_state, training )
+                action, action_logprob, action_mean = action_sampler( curr_state, training )
                 [ next_state, reward, done, info ] = self.env.step(np.array( action ))
                 next_state = self.memory.flatten_state(next_state)
                 value = self.agent.critic(curr_state) if agent_has('critic') else zero()
                 pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
                 constraint = self.agent.calculate_constraint(next_state) if agent_has('calculate_constraint') else zero()
 
+
                 # Store the transition
-                self.memory.add(curr_state, next_state, pred_state, 
+                self.memory.add(curr_state, next_state, pred_state, action_mean,
                                 action, action_logprob, reward, value, constraint, done)
                 scores[-1] += reward
 
