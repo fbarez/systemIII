@@ -16,6 +16,7 @@ from memory import Memory
 import gym
 import csv
 import argparse
+import os
 
 import matplotlib.pyplot as plt
 from plot_scores import plot_scores
@@ -134,7 +135,7 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
     print("Finished training")
     return train_scores, test_scores
 
-def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
+def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_train:int=1 ):
     # Choose the environment
     if game_mode == "car":
         env = CreateWorld()
@@ -229,6 +230,7 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         action_std_init=0.4,
         kl_target=kl_target,
         use_cuda=torch.cuda.is_available(),
+        checkpoint_dir=f"tmp/models/{game_mode}/{agent_type}/{model_name}",
         agent_type=agent_type,
         game_mode=game_mode,
         num_timesteps=num_timesteps,
@@ -241,6 +243,7 @@ def main( game_mode:str, agent_type:str, num_agents_to_train:int=1 ):
         timestep_length=timestep_length,
         save_period=save_period,
     )
+    os.makedirs(params.checkpoint_dir, exist_ok=True)
 
     train_scores_log = []
     test_scores_log  = []
@@ -287,7 +290,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--game_mode',  type=str, default='cartpole')
     parser.add_argument('--agent_type', type=str, default='ac')
+    parser.add_argument('--model_name', type=str, default='model')
     parser.add_argument('-n', type=int, default=1)
 
     args = parser.parse_args()
-    main( args.game_mode, args.agent_type, num_agents_to_train=args.n )
+    main( args.game_mode, args.agent_type, model_name=args.model_name, num_agents_to_train=args.n )
