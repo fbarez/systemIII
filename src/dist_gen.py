@@ -59,7 +59,7 @@ class get_distance(object):
             for _ in range(num_iter):
                 # Get the next state
                 action, action_logprob, action_mean = action_sampler( curr_state, training )
-                [ next_state, reward, done, info ] = self.env.step(np.array( action ))
+                [ next_state, reward, done, info ] = self.env.step(np.array( action.cpu() ))
                 next_state = self.memory.flatten_state(next_state)
                 value = self.agent.critic(curr_state) if agent_has('critic') else zero()
                 pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
