@@ -22,4 +22,12 @@ config = {
 def CreateWorld():
     #env = Engine(config)
     env = gym.make('Safexp-CarGoal2-v0')
+
+    # ensure state is returned as a dict
+    state = env.reset()
+    if not type(state) is dict:
+        env.toggle_observation_space()
+        state = env.reset()
+    assert type(state) is dict
+
     return env
