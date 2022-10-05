@@ -20,5 +20,6 @@ config = {
 }
 
 def CreateWorld():
-    env = Engine(config)
+    #env = Engine(config)
+    env = gym.make('Safexp-CarGoal2-v0')
     return env
