@@ -2,8 +2,9 @@ import numpy as np
 import torch
 
 class Memory:
-    def __init__(self, use_cuda=False, state_mapping=None):
+    def __init__(self, use_cuda=None, state_mapping=None):
         self.state_mapping = state_mapping
+        use_cuda = torch.cuda.is_available() if use_cuda is None else use_cuda
         self.device = torch.device("cuda" if use_cuda else "cpu")
 
         self.curr_states = []

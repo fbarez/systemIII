@@ -44,7 +44,7 @@ class ActorNetwork(nn.Module):
                 nn.ReLU(),
                 nn.Linear(p.hidden_size2, p.action_size),
                 nn.Tanh()
-            ).float()
+            ).float().to(self.device)
         else:
             self.actor = nn.Sequential(
                 nn.Linear(p.state_size, p.hidden_size1),
@@ -53,7 +53,7 @@ class ActorNetwork(nn.Module):
                 nn.ReLU(),
                 nn.Linear(p.hidden_size2, p.action_size),
                 nn.Softmax(dim=-1)
-            ).float()
+            ).float().to(self.device)
 
         self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
         self.to(self.device)
@@ -125,6 +125,7 @@ class PredictorNetwork(nn.Module):
     def __init__(self, params:Params):
         super(PredictorNetwork, self).__init__()
         p = params
+        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
         self.update_checkpoint(p)
         self.predictor = nn.Sequential(
@@ -133,11 +134,10 @@ class PredictorNetwork(nn.Module):
                 nn.Linear(p.hidden_size1, p.hidden_size2),
                 nn.LeakyReLU(),
                 nn.Linear(p.hidden_size2, p.state_size),
-        ).float()
+        ).float().to(self.device)
         
         self.action_size = p.action_size
         self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
-        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
         self.to(self.device)
 
     def forward(self, prev_states, actions, dim=-1):
@@ -165,6 +165,7 @@ class CriticNetwork(nn.Module):
     def __init__(self, params:Params):
         super(CriticNetwork, self).__init__()
         p = params
+        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
         self.update_checkpoint(p)
         self.critic = nn.Sequential(
@@ -173,10 +174,9 @@ class CriticNetwork(nn.Module):
                 nn.Linear(p.hidden_size1, p.hidden_size2),
                 nn.ReLU(),
                 nn.Linear(p.hidden_size2, 1)
-        ).float()
+        ).float().to(self.device)
 
         self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
-        self.device = torch.device('cuda' if p.use_cuda else 'cpu')
         self.to(self.device)
 
     def forward(self, state):
