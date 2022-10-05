@@ -43,6 +43,7 @@ class get_distance(object):
         num_iter: number of iterations to run the rollout
         render: whether to render the environment
         """
+        self.memory = self.memory if self.agent is None else self.agent.memory
         agent_has = lambda attr : hasattr(self.agent, attr)
         scores = [ prev_score ]
 
