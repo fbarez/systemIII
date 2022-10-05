@@ -1,4 +1,3 @@
-from importlib.metadata import distribution
 from re import I
 from tkinter import W
 import numpy as np
@@ -123,7 +122,11 @@ class Agent:
         for model in self.models:
             model.update_checkpoint(self.params)
             model.save_checkpoint()
-    
+
+    def load_models(self):
+        for model in self.models:
+            model.load_checkpoint()
+
     def learn(self):
         raise NotImplementedError
 
