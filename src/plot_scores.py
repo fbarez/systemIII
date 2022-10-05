@@ -81,6 +81,7 @@ if __name__ == '__main__':
                     help='choose which file to plot')
     parser.add_argument('--window_size', type=int, default=10)
     parser.add_argument('--verbose', type=bool, default=False)
+    parser.add_argument('--output', type=str, default=None)
     args = parser.parse_args()
     window_size = args.window_size
 
@@ -123,4 +124,6 @@ if __name__ == '__main__':
         plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
 
     plt.legend()
+    if args.output:
+        plt.savefig(args.output, dpi=300)
     plt.show()
