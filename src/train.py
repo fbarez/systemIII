@@ -117,10 +117,10 @@ def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_t
     # Choose the environment
     if game_mode == "car":
         env = CreateWorld()
-        num_timesteps = 1e5
+        num_timesteps = 1e7
 
         actions_continuous = True
-        num_iter      = 3000
+        num_iter      = 30000
         batch_size    = 100
         num_epochs    = 80
         save_period   = num_iter*5
