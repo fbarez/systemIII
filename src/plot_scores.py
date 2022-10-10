@@ -9,7 +9,7 @@ import argparse
 from matplotlib.figure import Figure
 from typing import Optional
 
-def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=None, color:str="blue", label="Mean Score"):
+def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=None, color:str="blue", label="Mean Score", min_periods:int=1):
     if type(data) is not dict:
         data = {"val": data}
 
@@ -18,8 +18,9 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
         y = np.array(data["val"]) if len(data["val"]) != 0 else None
         rolling = False
 
-        y_mean = p.Series(y_mean).rolling(window=window_size, min_periods=1).mean()
-        y_std  = p.Series(y_std ).rolling(window=window_size, min_periods=1).mean()
+        min_periods = np.min([window_size, 1])
+        y_mean = p.Series(y_mean).rolling(window=window_size, min_periods=min_periods).mean()
+        y_std  = p.Series(y_std ).rolling(window=window_size, min_periods=min_periods).mean()
     
     elif len(data["val"]) != 0:
         # generate the rolling average of x:
@@ -59,16 +60,16 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     else:
         fig, ax = plt.subplots(figsize=(9,5))
     if y:
-        ax.plot(x, y, label='score', color='tab:purple', alpha=0.1)
+        ax.plot(x, y, label='raw data', color='tab:purple', alpha=0.1)
     ax.plot(x, y_mean, label=label, color=f'tab:{color}')
     ax.plot(x, y_lower, color=f'tab:{color}', alpha=0.1)
     ax.plot(x, y_upper, color=f'tab:{color}', alpha=0.1)
     ax.fill_between(x, y_lower, y_upper, alpha=0.2, color=f'tab:{color}')
     ax.set_xlabel(x_label)
     if rolling:
-        ax.set_ylabel('Rolling Mean Score')
+        ax.set_ylabel(f'Rolling Mean {label}')
     else:
-        ax.set_ylabel('Return')
+        ax.set_ylabel(label)
     ax.spines['top'  ].set_visible(False)
     ax.spines['right'].set_visible(False)
 
@@ -80,8 +81,9 @@ if __name__ == '__main__':
     parser.add_argument('filenames', metavar='filenames', type=str, nargs='+',
                     help='choose which file to plot')
     parser.add_argument('--window_size', type=int, default=10)
-    parser.add_argument('--verbose', type=bool, default=False)
+    parser.add_argument('--verbose', type=bool, default=True)
     parser.add_argument('--output', type=str, default=None)
+    parser.add_argument('--min_periods', type=float, default=1)
     args = parser.parse_args()
     window_size = args.window_size
 
@@ -99,7 +101,7 @@ if __name__ == '__main__':
             # and the data in the next columns
             data = { row[0]:[ float(i) for i in row[1:]] for row in reader }
             if args.verbose:
-                fig, data = plot_scores(data, window_size=window_size, sigmas=1)
+                fig, data = plot_scores(data, window_size=window_size, sigmas=1, min_periods=args.min_periods)
                 fig.canvas.manager.set_window_title(filename)
             data["episode"] = np.array(data["episode"])
             print(data)
@@ -119,9 +121,11 @@ if __name__ == '__main__':
             "val":  [],
             "episode": np.mean([ d["episode"] for d in data_list ], axis=0 ),
         }
+        if len(data_list) == 1:
+            test_scores_dict["std"] = data_list[0]["std"]
         # plot the scores
         print( data_list, "\n\ntest scores:", test_scores_dict )
-        plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key] )
+        plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key], min_periods=args.min_periods )
 
     plt.legend()
     if args.output:

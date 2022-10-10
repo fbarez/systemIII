@@ -17,6 +17,7 @@ import gym
 import csv
 import argparse
 import os
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 from plot_scores import plot_scores
@@ -27,12 +28,12 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
 
     episode, timesteps = 0, 0
     render    = False
-    scores    = [0]
     default_scores_dict = lambda : {"t": [], "episode":[], "val": [], "mean": [], "std": []}
-    train_scores = default_scores_dict()
-    test_scores  = default_scores_dict()
+    train_run_data = defaultdict(default_scores_dict)
+    test_run_data  = defaultdict(default_scores_dict)
     train_states = []
     test_states  = []
+    run_data = None
     t0 = time.time()
 
     # generate titles for states and constraints csv
@@ -56,29 +57,12 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
     train_states, test_states = [], []
 
     # pre-test agent as a zero datapoint
-    test_index  = 0
-    
-    print_test_scores = lambda s, t=0 : print( " -- [%6d] test scores:" % t, round(s["mean"][-1], 2), "pm", round(s["std"][-1], 2) )
-
-    # test agent
-    if params.run_tests:
-        curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
-            curr_state, params.test_iter, render, training=False )
-        test_scores[ "mean" ].append( np.mean(scores[:-1]) )
-        test_scores[ "std"  ].append( np.std(scores[:-1]) )
-        test_scores[ "t"    ].append( timesteps*params.timestep_length )
-        print_test_scores( test_scores, 0 )
-        test_states += [ [test_index, *state] for state in state_data ]
-        curr_state  = Memory().flatten_state( env.reset() )
-
-    scores[-1] = 0
-    test_index += 1
-    
+    # TODO: Add code for testing agent again
 
     while timesteps < params.num_timesteps:
         # Step 1. n-step rollout
-        curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
-            curr_state, params.num_iter, render, prev_score=scores[-1], training=True )
+        curr_state, run_data, state_data = runner.n_step_rollout( agent.choose_action,
+            curr_state, params.num_iter, render, prev_run_data=run_data, training=True )
         train_states += [ [timesteps+i, *state] for i, state in enumerate(state_data) ]
         timesteps += params.num_iter
 
@@ -93,34 +77,28 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
             agent.decay_action_std(0.01, 0.1)
 
         # Step 4. Print some info about the training so far
+        initial_episode = episode
+        num_dones = len( run_data["score"] ) - 1
+        episode += num_dones
+
+        for metric, data in run_data.items():
+            for i, value in enumerate(data):
+                train_run_data[metric]["val"].append( value )
+                train_run_data[metric]["episode"].append( initial_episode + i )
+
+        scores = run_data["score"]
         for i, score in enumerate(scores[:-1]):
-            episode += 1
-            train_scores[ "val"     ].append( round(score, 3) )
-            train_scores[ "episode" ].append( episode )
             loss_info = f'\tlosses {losses}' if i==num_dones-1 else ''
-            print('episode', episode, 'score %.2f' % scores[i], loss_info )
+            print('episode', initial_episode+i, 'score %.2f' % score, loss_info )
         
         # Step 5. Test the model to gain insight into performance
-        if timesteps % params.test_period == 0 and params.run_tests:
-            # test agent
-            curr_state = Memory().flatten_state( env.reset() )
-            curr_state, scores, state_data = runner.n_step_rollout( agent.choose_action,
-                curr_state, params.test_iter, render, training=False )
-            test_scores[ "mean" ].append( np.mean(scores[:-1]) )
-            test_scores[ "std"  ].append( np.std(scores[:-1]) )
-            test_scores[ "t"    ].append( timesteps*params.timestep_length )
-            print_test_scores( test_scores, timesteps )
-            test_states += [ [test_index, *state] for state in state_data ]
+        # TODO: Re-add code for testing the model
 
-            curr_state = Memory().flatten_state( env.reset() )
-            scores[-1] = 0
-            test_index += 1
-        
         # Step 6. Save the model
         if params.save_period and timesteps % params.save_period == 0:
             agent.save_models()
 
-        # Step 7. Save logs about the Model
+        # Step 7. Save logs about the Model states
         for state_data, name in [(train_states, "training"), (test_states, "test")]:
             if name == "test" and not params.run_tests:
                 continue
@@ -133,23 +111,23 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
         train_states, test_states  = [], []
         
     print("Finished training")
-    return train_scores, test_scores
+    return train_run_data, test_run_data
 
 def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_train:int=1 ):
     # Choose the environment
     if game_mode == "car":
         env = CreateWorld()
-        num_timesteps = 1e7
+        num_timesteps = 1e5
 
         actions_continuous = True
-        num_iter      = 30000
+        num_iter      = 3000
         batch_size    = 100
         num_epochs    = 80
         save_period   = num_iter*5
         run_tests     = False
         test_period   = np.Inf
         test_iter     = 0
-        timestep_length = 10
+        timestep_length = 1
         hidden_size   = 256
         reward_decay  = 0.99
         gae_lambda    = 0.97
@@ -245,43 +223,37 @@ def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_t
     )
     os.makedirs(params.checkpoint_dir, exist_ok=True)
 
-    train_scores_log = []
-    test_scores_log  = []
-    for _ in range(num_agents_to_train):
+    train_data_log = []
+    test_data_log  = []
+    for i in range(num_agents_to_train):
         # run the training
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
         agent = agent_constructor(params)
-        train_scores, test_scores = train_model( env, agent, params, run_name ) 
+        train_data, test_data = train_model( env, agent, params, run_name ) 
 
-        train_scores_log.append( train_scores )
-        test_scores_log.append( test_scores )
+        train_data_log.append( train_data )
+        test_data_log.append( test_data )
 
         # save the scores from this run
-        for score_data, name in [(train_scores, "training"), (test_scores, "test")]:
-            print( score_data )
-            with open(f"runs/{name}-scores-{run_name}.csv", "w") as f:
-                writer = csv.writer(f)
-                for label, data in score_data.items():
-                    writer.writerow([label] + data)
+        for data_collection, name in [(train_data, "training"), (test_data, "test")]:
+            for metric, data_dict in data_collection.items():
+                print( metric, ":", data_dict )
+                folder_name = f"runs/{model_name}"
+                os.makedirs(folder_name, exist_ok=True)
+                with open(f"{folder_name}/{name}-{metric}-{run_name}.csv", "w") as f:
+                    writer = csv.writer(f)
+                    for label, data in data_dict.items():
+                        writer.writerow([label] + data)
 
-            # plot the scores
-            fig = plot_scores( score_data, window_size=10 )
-            plt.savefig( f"figs/{name}-scores-{run_name}.png", dpi=300 )
-
-    test_scores_dict = {
-        "mean": np.mean( [ d["mean"] for d in test_scores_log ], axis=0 ),
-        "std":  np.std(  [ d["mean"] for d in test_scores_log ], axis=0 ),
-        "t":    np.mean( [ d["t"]    for d in test_scores_log ], axis=0 ),
-        "val":  [],
-        "episode": [],
-    }
-    
-    # plot the scores
-    print( test_scores_dict )
-    fig = plot_scores( test_scores_dict, window_size=10 )
-    plt.savefig( f"figs/{name}-scores-mean-over-{num_agents_to_train}-{run_name}.png", dpi=300 )
+                # plot the scores
+                fig = plot_scores( data_dict, window_size=10, label=metric )
+                folder_name = f"figs/{model_name}"
+                os.makedirs(folder_name, exist_ok=True)
+                file_name = f"{folder_name}/{name}-{metric}-{run_name}.png"
+                plt.title( metric )
+                plt.savefig( file_name, dpi=300 )
 
     plt.show()
 

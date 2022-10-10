@@ -12,6 +12,8 @@ import torch
 from world import CreateWorld
 from memory import Memory
 from typing import Optional, Callable
+from collections import defaultdict
+from typing import Optional, List, Dict
 print("ignore...\n")
 
 
@@ -35,7 +37,7 @@ class get_distance(object):
                         curr_state: Optional[torch.Tensor] = None,
                         num_iter: int = 100,
                         render: bool  = False,
-                        prev_score: int = 0,
+                        prev_run_data: Optional[Dict[str, list]] = None,
                         training: bool = False ):
         """[summary]
         action_sampler: function that takes in a state and returns an action
@@ -45,8 +47,20 @@ class get_distance(object):
         """
         self.memory = self.memory if self.agent is None else self.agent.memory
         agent_has = lambda attr : hasattr(self.agent, attr)
-        scores = [ prev_score ]
+        if prev_run_data is None:
+            run_data = defaultdict(list)
+        else:
+            run_data = defaultdict(list, prev_run_data)
+            for k, v in prev_run_data.items():
+                run_data[k] = v[-1:]
 
+        def add_to_run_data( key, value, done ):
+            if key not in run_data:
+                run_data[key] = [0]
+            run_data[key][-1] += value
+            if done:
+                run_data[key].append(0)
+        
         # if no agent provided, use a random action sampler
         if action_sampler is None:
             action_sampler = self.random_action_sampler
@@ -61,6 +75,7 @@ class get_distance(object):
                 # Get the next state
                 action, action_logprob, action_mean = action_sampler( curr_state, training )
                 [ next_state, reward, done, info ] = self.env.step(np.array( action.cpu() ))
+                curr_data = {"score": reward, **info} 
                 next_state = self.memory.flatten_state(next_state)
                 value = self.agent.critic(curr_state) if agent_has('critic') else zero()
                 pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
@@ -70,7 +85,9 @@ class get_distance(object):
                 # Store the transition
                 self.memory.add(curr_state, next_state, pred_state, action_mean,
                                 action, action_logprob, reward, value, constraint, done)
-                scores[-1] += reward
+
+                for key, value in curr_data.items():
+                    add_to_run_data(key, value, done)
 
                 if render:
                     self.env.render()
@@ -78,7 +95,6 @@ class get_distance(object):
                 # get things ready for next loop
                 if done:
                     curr_state = self.memory.flatten_state( self.env.reset() )
-                    scores.append(0)
                 else:
                     curr_state = next_state
 
@@ -86,7 +102,7 @@ class get_distance(object):
                 state_data.append([ done, reward, float(constraint), *actions.cpu().numpy(), 0, *next_state.cpu().numpy() ])
 
             assert type(curr_state) is torch.Tensor
-            return curr_state, scores, state_data
+            return curr_state, run_data, state_data
 
     def extract_distances(self, observations):
         '''

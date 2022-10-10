@@ -15,13 +15,13 @@ from model import ActorNetwork, PredictorNetwork, CriticNetwork
 from params import Params
 
 class Agent:
-    def __init__(self, params:Params):
+    def __init__(self, params:Params, memory:Optional[Memory]=None):
         # initialize hyperparameters / config
         self.params = params    
         self.device = torch.device('cuda' if self.params.use_cuda else 'cpu')
-
+        
         # initialize memory and networks
-        self.memory = Memory( self.params.use_cuda )
+        self.memory = Memory( self.params.use_cuda ) if memory is None else memory
 
         # shortcut parameters
         self.gae_lambda   = self.params.gae_lambda
@@ -131,8 +131,8 @@ class Agent:
         raise NotImplementedError
 
 class S3Agent(Agent):
-    def __init__(self, params:Params):
-        super(S3Agent, self).__init__(params)
+    def __init__(self, params:Params, memory:Optional[Memory]=None):
+        super(S3Agent, self).__init__(params, memory)
 
         self.name = "s3"
         self.actor     = ActorNetwork( params )
@@ -223,8 +223,8 @@ class S3Agent(Agent):
 # not yet working
 class ActorCriticAgent( Agent ):
        
-    def __init__(self, params:Params):
-        super(ActorCriticAgent, self).__init__(params)
+    def __init__(self, params:Params, memory:Optional[Memory]=None):
+        super(ActorCriticAgent, self).__init__(params, memory)
 
         self.name = "ac"
         self.actor  = ActorNetwork( params )
