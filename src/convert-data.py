@@ -3,7 +3,14 @@ import csv
 import argparse
 
 # change data from openai safefy starter agents into different format used by this repo
-def convert_scores_format( input_filename, output_filename, mode='reward' ):
+def convert_scores_format( input_filename, output_filename=None, mode='reward' ):
+    if output_filename is None:
+        if not '/' in input_filename:
+            output_filename = 'training_scores.csv'
+        else:
+            input_filename_split = input_filename.split('/')
+            output_filename = '/'.join( input_filename_split[:-1] ) + '/training_scores.csv'
+
     mean_map = { 'reward': 'AverageEpRet', 'cost': 'AverageEpCost' }
     std_map = { 'reward': 'StdEpRet', 'cost': 'StdEpCost' }
     mean = mean_map[mode]
@@ -27,7 +34,7 @@ def convert_scores_format( input_filename, output_filename, mode='reward' ):
 
     # Save to csv file, with title in the first column
     with open( output_filename, "w" ) as f:
-        writer = csv.writer( f, delimiter="\t" )
+        writer = csv.writer( f, delimiter="," )
         for key, value in data.items():
             writer.writerow( [key] + list(value) )
 
@@ -36,7 +43,7 @@ def convert_scores_format( input_filename, output_filename, mode='reward' ):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Convert data from openai safety starter agents to data format used by this repo.')
     parser.add_argument( 'input_filename', metavar='input_filename', type=str )
-    parser.add_argument( 'output_filename', metavar='output_filename', type=str )
+    parser.add_argument( '--output_filename', metavar='output_filename', type=str )
     parser.add_argument( '--mode', type=str, default='reward' )
     args = parser.parse_args()
 

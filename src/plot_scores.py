@@ -60,11 +60,11 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
     else:
         fig, ax = plt.subplots(figsize=(9,5))
     if y:
-        ax.plot(x, y, label='raw data', color='tab:purple', alpha=0.1)
-    ax.plot(x, y_mean, label=label, color=f'tab:{color}')
-    ax.plot(x, y_lower, color=f'tab:{color}', alpha=0.1)
-    ax.plot(x, y_upper, color=f'tab:{color}', alpha=0.1)
-    ax.fill_between(x, y_lower, y_upper, alpha=0.2, color=f'tab:{color}')
+        ax.plot(x, y, label='raw data', color='purple', alpha=0.1)
+    ax.plot(x, y_mean, label=label, color=color)
+    ax.plot(x, y_lower, color=color, alpha=0.1)
+    ax.plot(x, y_upper, color=color, alpha=0.1)
+    ax.fill_between(x, y_lower, y_upper, alpha=0.2, color=color)
     ax.set_xlabel(x_label)
     if rolling:
         ax.set_ylabel(f'Rolling Mean {label}')
@@ -91,9 +91,19 @@ if __name__ == '__main__':
     for filename in args.filenames:
         with open(filename, "r") as f:
             agent_type = 'ppo'
-            if 's3' in filename:
+            if 'ppo_lagrangian' in filename:
+                agent_type = 'ppo_lagrangian'
+            elif 'trpo_lagrangian' in filename:
+                agent_type = 'trpo_lagrangian'
+            elif 'ppo' in filename:
+                agent_type = 'ppo'
+            elif 'trpo' in filename:
+                agent_type = 'trpo'
+            elif 'cpo' in filename:
+                agent_type = 'cpo'
+            elif 's3' in filename:
                 agent_type = 's3'
-            if 'ac' in filename:
+            elif 'ac' in filename:
                 agent_type = 'ac'
             
             reader = csv.reader(f)
@@ -104,14 +114,30 @@ if __name__ == '__main__':
                 fig, data = plot_scores(data, window_size=window_size, sigmas=1, min_periods=args.min_periods)
                 fig.canvas.manager.set_window_title(filename)
             data["episode"] = np.array(data["episode"])
-            print(data)
             all_data[agent_type].append(data)
 
     # plot the mean of all data
     fig, ax = plt.subplots(figsize=(9,5))
-    color_map = {'ppo': 'blue', 's3': 'orange', 'ac': 'green'}
-    label_map = {'ppo': 'Proximal Policy Optimization', 's3': 'System 3', 'ac': 'Proximal Policy Optimization'}
+    color_map = {
+        "ppo":             "tab:green",
+        "ppo_lagrangian":  "tab:red",
+        "trpo":            "tab:purple",
+        "trpo_lagrangian": "darkgoldenrod",
+        "cpo":             "tab:blue",
+        's3': 'orange',
+        'ac': 'darkgreen'
+    }
+    label_map = {
+        "ppo":             "PPO",
+        "ppo_lagrangian":  "PPO Lagrangian",
+        "trpo":            "TRPO",
+        "trpo_lagrangian": "TRPO Lagrangian",
+        "cpo":             "CPO",
+        's3':              'System 3',
+        'ac':              'PPO'
+    }
     for key, data_list in all_data.items():
+        print( key, len(data_list) )
         if not len( data_list[0]["mean"] ):
             continue
         test_scores_dict = {
@@ -124,7 +150,6 @@ if __name__ == '__main__':
         if len(data_list) == 1:
             test_scores_dict["std"] = data_list[0]["std"]
         # plot the scores
-        print( data_list, "\n\ntest scores:", test_scores_dict )
         plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key], min_periods=args.min_periods )
 
     plt.legend()
