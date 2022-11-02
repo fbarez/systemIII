@@ -7,24 +7,43 @@ import re
 from collections import defaultdict
 import argparse
 from matplotlib.figure import Figure
+from matplotlib.axes._axes import Axes
 from typing import Optional
+import seaborn as sns
+sns.set_theme()
 
-def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=None, color:str="blue", label="Mean Score", min_periods:int=1):
+# Hardcoded values
+plt.rcParams["figure.figsize"] = (9, 5)
+XMIN, XMAX = 0, 1e7
+LINE_WIDTH = 3
+
+def plot_scores(data,
+        window_size: int = 10,
+        sigmas: float = 1,
+        fig: Optional[Figure] = None,
+        ax: Optional[Axes] = None,
+        color: str = "blue",
+        label: str = "Mean Score",
+        min_periods: int = 1,
+        yscale: float = 1,
+        ):
     if type(data) is not dict:
         data = {"val": data}
+
+    min_periods = int( np.median([1, min_periods, window_size]) )
 
     if len(data["mean"]) != 0:
         y_mean, y_std = np.array(data["mean"]), np.array(data["std"])
         y = np.array(data["val"]) if len(data["val"]) != 0 else None
         rolling = False
 
-        min_periods = np.min([window_size, 1])
-        y_mean = p.Series(y_mean).rolling(window=window_size, min_periods=min_periods).mean()
-        y_std  = p.Series(y_std ).rolling(window=window_size, min_periods=min_periods).mean()
+        y_mean = p.Series(y_mean).rolling(
+            window=window_size, min_periods=min_periods).mean()
+        y_std  = p.Series(y_std ).rolling(
+            window=window_size, min_periods=min_periods).mean()
     
     elif len(data["val"]) != 0:
         # generate the rolling average of x:
-        min_periods = np.min([window_size, 1])
         y = data["val"]
         y_rolling = p.Series(y).rolling(window=window_size, min_periods=min_periods)
         y_mean = y_rolling.mean()
@@ -50,30 +69,35 @@ def plot_scores(data, window_size:int=10, sigmas:float=2, fig:Optional[Figure]=N
         x = np.array(list(range(len(y))))
         data["t"] = x
 
+    # scale axes
+    y_mean *= yscale
+    y_std  *= yscale
+    y = None if y is None else y*yscale
+
     # generate the upper and lower bounds of the rolling average windows:
     y_upper = y_mean + (y_std * sigmas)
     y_lower = y_mean - (y_std * sigmas)
 
     # Draw plot with error band and extra formatting to match seaborn style
-    if fig:
+    if not fig is None:
         ax = fig.axes[0]
-    else:
-        fig, ax = plt.subplots(figsize=(9,5))
-    if y:
-        ax.plot(x, y, label='raw data', color='purple', alpha=0.1)
-    ax.plot(x, y_mean, label=label, color=color)
-    ax.plot(x, y_lower, color=color, alpha=0.1)
-    ax.plot(x, y_upper, color=color, alpha=0.1)
-    ax.fill_between(x, y_lower, y_upper, alpha=0.2, color=color)
+    elif ax is None:
+        fig, ax = plt.subplots()
+
+    # Plot seaborn line and the error bands
+    ax.plot(x, y_mean, label=label, color=color, linewidth=LINE_WIDTH)
+    ax.fill_between(x, y_lower, y_upper, alpha=0.1, color=color)
     ax.set_xlabel(x_label)
     if rolling:
         ax.set_ylabel(f'Rolling Mean {label}')
     else:
         ax.set_ylabel(label)
-    ax.spines['top'  ].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    plt.xlim(xmin=XMIN, xmax=XMAX)
+    
+    if y:
+        ax.plot(x, y, label='raw data', color='purple', alpha=0.1)
 
-    return fig, data
+    return ax, data
 
 if __name__ == '__main__':
     # load data file
@@ -84,6 +108,10 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', type=bool, default=True)
     parser.add_argument('--output', type=str, default=None)
     parser.add_argument('--min_periods', type=float, default=1)
+    parser.add_argument('--ylabel', type=str, default='Average Episode Return')
+    parser.add_argument('--yscale', type=float, default=1)
+    parser.add_argument('--compare_line', type=float, default=None)
+    parser.add_argument('--num_sigmas', type=float, default=1)
     args = parser.parse_args()
     window_size = args.window_size
 
@@ -96,6 +124,7 @@ if __name__ == '__main__':
             elif 'trpo_lagrangian' in filename:
                 agent_type = 'trpo_lagrangian'
             elif 'ppo' in filename:
+                continue
                 agent_type = 'ppo'
             elif 'trpo' in filename:
                 agent_type = 'trpo'
@@ -111,30 +140,37 @@ if __name__ == '__main__':
             # and the data in the next columns
             data = { row[0]:[ float(i) for i in row[1:]] for row in reader }
             if args.verbose:
-                fig, data = plot_scores(data, window_size=window_size, sigmas=1, min_periods=args.min_periods)
-                fig.canvas.manager.set_window_title(filename)
+                ax, data = plot_scores(data, window_size=window_size,
+                    min_periods=args.min_periods, yscale=args.yscale )
+                ax.figure.canvas.manager.set_window_title(filename)
             data["episode"] = np.array(data["episode"])
+            if len(data['t']) == 0:
+                data['t'] = data['episode']*1000
             all_data[agent_type].append(data)
 
+
     # plot the mean of all data
-    fig, ax = plt.subplots(figsize=(9,5))
+    fig, ax = plt.subplots()
+    plt.hlines( args.compare_line, 0, 1e7, color='darkred',
+                linestyle='dashed', linewidth=LINE_WIDTH )
+
     color_map = {
         "ppo":             "tab:green",
+        'ac':              'tab:green',
         "ppo_lagrangian":  "tab:red",
         "trpo":            "tab:purple",
         "trpo_lagrangian": "darkgoldenrod",
         "cpo":             "tab:blue",
         's3': 'orange',
-        'ac': 'darkgreen'
     }
     label_map = {
+        's3':              'System 3',
+        'ac':              'PPO',
         "ppo":             "PPO",
         "ppo_lagrangian":  "PPO Lagrangian",
         "trpo":            "TRPO",
         "trpo_lagrangian": "TRPO Lagrangian",
-        "cpo":             "CPO",
-        's3':              'System 3',
-        'ac':              'PPO'
+        "cpo":             "CPO"
     }
     for key, data_list in all_data.items():
         print( key, len(data_list) )
@@ -150,9 +186,15 @@ if __name__ == '__main__':
         if len(data_list) == 1:
             test_scores_dict["std"] = data_list[0]["std"]
         # plot the scores
-        plot_scores( test_scores_dict, window_size=20, sigmas=1, fig=fig, color=color_map[key], label=label_map[key], min_periods=args.min_periods )
+        color, label = color_map[key], label_map[key]
+        ax, data = plot_scores( test_scores_dict, window_size=args.window_size,
+            sigmas=args.num_sigmas, yscale=args.yscale, ax=ax, color=color,
+            label=label, min_periods=args.min_periods )
 
+    if args.compare_line:
+        print( args.compare_line )
+
+    plt.ylabel( args.ylabel )
     plt.legend()
-    if args.output:
-        plt.savefig(args.output, dpi=300)
+    plt.savefig( args.output, dpi=300 )
     plt.show()

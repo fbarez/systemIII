@@ -7,11 +7,7 @@ import matplotlib.pyplot as plt
 
 # change data from openai safefy starter agents into different format used by this repo
 def convert_scores_format( input_filename, output_filename=None, mode='reward' ):
-    mean_map     = { 'reward': 'AverageEpRet',    'cost': 'AverageEpCost' }
-    std_map      = { 'reward': 'StdEpRet',        'cost': 'StdEpCost' }
     filename_map = { 'reward': 'training_scores', 'cost': 'training_costs'}
-    mean = mean_map[mode]
-    std = std_map[mode]
     default_filename = filename_map[mode]
 
     if output_filename is None:
@@ -22,19 +18,21 @@ def convert_scores_format( input_filename, output_filename=None, mode='reward' )
             output_filename = '/'.join( input_filename_split[:-1] ) + f'/{default_filename}.csv'
 
     with open( input_filename, "r" ) as f:
-        reader = csv.reader( f, delimiter="\t" )
-        # Read csv file . First line has titles, other lines have data
-        titles = next(reader)
-        original_data = { title:[] for title in titles }
-        for row in reader:
-            for title, value in zip(titles, row):
-                original_data[title].append( float(value) )
-        
+        original_data = {}
         data = {'t': [], 'episode': [], 'val': [], 'mean': [], 'std': []}
-        data['t'] = ( np.array( original_data['Epoch'], dtype=np.int64 )+1 )*30000
-        data['episode'] = ( np.array( original_data['Epoch'], dtype=np.int64 )+1 )*30
-        data['mean']    = np.array( original_data[mean], dtype=np.float32 )
-        data['std']     = np.array( original_data[std], dtype=np.float32 )
+
+        reader = csv.reader( f, delimiter=',' )
+        for line in reader:
+            key, values = line[0], line[1:]
+            original_data[key] = np.array( values )
+
+        vals_arr = np.array( original_data['val'], dtype=np.float )
+        for i in np.array(original_data['episode'], dtype=np.int64)[::30]:
+            vals = np.array( vals_arr[i:i+30] )
+            data['mean'].append( np.mean( vals ) )
+            data['std'].append( np.std( vals ) )
+            data['episode'].append( i )
+            data['t'].append( i*1000 )
 
     # Save to csv file, with title in the first column
     with open( output_filename, "w" ) as f:
