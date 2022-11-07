@@ -16,6 +16,7 @@ sns.set_theme()
 plt.rcParams["figure.figsize"] = (9, 5)
 XMIN, XMAX = 0, 1e7
 LINE_WIDTH = 3
+EP_PER_EPOCH = 30
 
 def plot_scores(data,
         window_size: int = 10,
@@ -104,14 +105,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Plot diagrams.')
     parser.add_argument('filenames', metavar='filenames', type=str, nargs='+',
                     help='choose which file to plot')
-    parser.add_argument('--window_size', type=int, default=10)
-    parser.add_argument('--verbose', type=bool, default=True)
-    parser.add_argument('--output', type=str, default=None)
+    parser.add_argument('-w', '--window_size', type=int, default=10)
     parser.add_argument('--min_periods', type=float, default=1)
-    parser.add_argument('--ylabel', type=str, default='Average Episode Return')
+    parser.add_argument('-o', '--output', type=str, default=None)
+    parser.add_argument('-l', '--ylabel', type=str, default='AverageEpRet')
     parser.add_argument('--yscale', type=float, default=1)
     parser.add_argument('--compare_line', type=float, default=None)
     parser.add_argument('--num_sigmas', type=float, default=1)
+    parser.add_argument('--sum_mode', action='store_true', default=False )
+    parser.add_argument('-v', '--verbose', action='store_true', default=False)
     args = parser.parse_args()
     window_size = args.window_size
 
@@ -183,11 +185,24 @@ if __name__ == '__main__':
             "val":  [],
             "episode": np.mean([ d["episode"] for d in data_list ], axis=0 ),
         }
+
+        # Sum mode shows cumulative costs etc
+        if args.sum_mode:
+            means = test_scores_dict["mean"] * EP_PER_EPOCH
+            stds  = test_scores_dict["std"]  * EP_PER_EPOCH
+            for i in range(1, len(means)):
+                means[ i ] = means[i] + means[i-1]
+                stds[ i ]  = stds[i] + stds[i-1]
+                test_scores_dict["mean"] = means
+                test_scores_dict["std"]  = stds
+                window_size = 1
+        
         if len(data_list) == 1:
             test_scores_dict["std"] = data_list[0]["std"]
+
         # plot the scores
         color, label = color_map[key], label_map[key]
-        ax, data = plot_scores( test_scores_dict, window_size=args.window_size,
+        ax, data = plot_scores( test_scores_dict, window_size=window_size,
             sigmas=args.num_sigmas, yscale=args.yscale, ax=ax, color=color,
             label=label, min_periods=args.min_periods )
 
