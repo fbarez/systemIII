@@ -141,14 +141,31 @@ class S3Agent(Agent):
 
         self.models = [ self.actor, self.predictor, self.critic ]
 
-    def calculate_constraint( self, state ):
+    def calculate_constraint( self, index, state, memory ):
         return 1
 
     def calculate_all_constraints(self, states):
         constraints = torch.zeros(len(states), dtype=torch.float32).to(self.device)
         for i, state in enumerate(states):
-            constraints[i] = self.calculate_constraint(state)
+            constraints[i] = self.calculate_constraint(i, state, self.memory)
         return constraints
+
+    def calculate_constrained_rewards( self,
+            cumulative_rewards:torch.Tensor,
+            constraints_arr:torch.Tensor
+            ):
+        # constrained_rewards = torch.min( cumulative_rewards, cumulative_rewards*constraints_arr )
+        # code for multiplying constraints by cumulative reward
+        delta_arr = torch.zeros_like( cumulative_rewards )
+        constrained_rewards = torch.zeros_like( cumulative_rewards )
+        constrained_rewards[-1] = cumulative_rewards[-1] * constraints_arr[-1]
+        for i in range(len(cumulative_rewards)-2, -1, -1):
+            reward_diff = cumulative_rewards[i] * ( 1 - constraints_arr[i] )
+            options = [ torch.tensor(0), reward_diff, self.reward_decay*delta_arr[i+1] ]
+            delta_arr[i] = torch.max( torch.stack( options ) )
+            constrained_rewards[i] = cumulative_rewards[i] - delta_arr[i]
+        del delta_arr
+        return constrained_rewards
 
     def learn(self):
         # prepare advantages and other tensors used for training
@@ -156,7 +173,8 @@ class S3Agent(Agent):
         cumulative_rewards = self.calculate_cumulative_rewards()
         cumulative_values  = self.calculate_cumulative_values()
         constraints_arr = self.calculate_all_constraints(self.memory.next_states)
-        constrained_rewards = torch.min( cumulative_rewards, cumulative_rewards*constraints_arr )
+        constrained_rewards = self.calculate_constrained_rewards( 
+            cumulative_rewards=cumulative_rewards, constraints_arr=constraints_arr )
         advantages_arr = constrained_rewards - cumulative_values 
 
         # begin training loops

@@ -4,6 +4,7 @@ from torch.multiprocessing import Pipe
 from agents import S3Agent, ActorCriticAgent, Agent
 from world import CreateWorld
 from params import Params
+from constraints import *
 
 from typing import Optional
 
@@ -11,7 +12,7 @@ import numpy as np
 import copy
 import torch
 import time
-from dist_gen import get_distance
+from runner import Runner
 from memory import Memory
 import gym
 import csv
@@ -22,12 +23,16 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from plot_scores import plot_scores
 
-def train_model( env, agent:Agent, params:Params, run_name:str ):
-    runner = get_distance( env, agent )
+def train_model( env,
+        agent: Agent,
+        params: Params,
+        run_name: str,
+        render: bool = False
+        ):
+    runner = Runner( env, agent )
     curr_state = Memory().flatten_state( env.reset() )
 
     episode, timesteps = 0, 0
-    render    = False
     default_scores_dict = lambda : {"t": [], "episode":[], "val": [], "mean": [], "std": []}
     train_run_data = defaultdict(default_scores_dict)
     test_run_data  = defaultdict(default_scores_dict)
@@ -37,13 +42,18 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
     t0 = time.time()
 
     # generate titles for states and constraints csv
-    curr_state, state_mapping = Memory().flatten_state( env.reset(), return_mapping=True )
+    env.reset()
+    action = env.action_space.sample()
+    [ state, reward, done, info ] = env.step(np.array( action ))
+
+    curr_state, state_mapping = Memory().flatten_state( state, return_mapping=True )
     reverse_mapping = ["" for _ in range(params.state_size)]
     for key, [start,end] in state_mapping.items():
         for i in range(start, end):
             reverse_mapping[i] = key+"_"+str(i-start)
-    action_mapping = ["action" if not params.actions_continuous else "action_"+str(i) for i in range(params.action_size)]
-    titles = ["time", "done", "reward", "constraint", *action_mapping, *reverse_mapping ]
+    info_mapping    = list( info.keys() )
+    action_mapping  = ["action" if not params.actions_continuous else "action_"+str(i) for i in range(params.action_size)]
+    titles = ["time", "done", "reward", "constraint", *action_mapping, *info_mapping, *reverse_mapping ]
     train_states.append( titles )
     test_states.append( titles )
     for state_data, name in [(train_states, "training"), (test_states, "test")]:
@@ -62,8 +72,9 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
     while timesteps < params.num_timesteps:
         # Step 1. n-step rollout
         curr_state, run_data, state_data = runner.n_step_rollout( agent.choose_action,
-            curr_state, params.num_iter, render, prev_run_data=run_data, training=True )
-        train_states += [ [timesteps+i, *state] for i, state in enumerate(state_data) ]
+            curr_state, params.num_iter, render=render, prev_run_data=run_data,
+            training=True, current_time=timesteps )
+        train_states.extend( state_data )
         timesteps += params.num_iter
 
         # step 2. get some info
@@ -113,7 +124,12 @@ def train_model( env, agent:Agent, params:Params, run_name:str ):
     print("Finished training")
     return train_run_data, test_run_data
 
-def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_train:int=1 ):
+def main( game_mode: str,
+          agent_type: str,
+          model_name: str = "model",
+          num_agents_to_train: int = 1,
+          render: bool = False
+        ):
     # Choose the environment
     if game_mode == "car":
         env = CreateWorld()
@@ -134,14 +150,7 @@ def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_t
         learning_rate = 0.001
         kl_target     = 0.012
 
-        def calculate_constraint( self:Agent, state:torch.Tensor, memory:Optional[Memory]=None ):
-            max_lidar_range = 5
-            memory = memory if not memory is None else self.memory
-            hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
-            closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
-            hazardous_distance = 0.5
-            constraint = ( 1 - torch.clamp( closest_hazard, 0, hazardous_distance )*(1/hazardous_distance) )
-            return 1 - constraint
+        calculate_constraint = calculate_constraint_cargoal2_v0
 
     elif game_mode == "cartpole":
         env = gym.make('CartPole-v1')
@@ -160,23 +169,19 @@ def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_t
         gae_lambda    = 0.95
         learning_rate = 0.0003
         kl_target     = 0
-        
-        def calculate_constraint( self:Agent, state:torch.Tensor, memory:Optional[Memory]=None ):
-            pole_angle, pole_max = state[2], 0.2095
-            hazardous_distance = 0.1
-            angle_remaining = pole_max - torch.abs(pole_angle)
-            constraint = ( 1 - torch.clamp(angle_remaining, 0, hazardous_distance)*(1/hazardous_distance) )
-            return 1 - constraint
+
+        calculate_constraint = calculate_constraint_cartpole 
 
     else:
         raise ValueError("game_mode must be 'car' or 'cartpole'")
     
     class S3AgentConstructor(S3Agent):
-        def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
-            return calculate_constraint( self, state, memory )
+        def calculate_constraint( self, index: int, state: torch.Tensor, memory: Optional[Memory] = None ):
+            return calculate_constraint( self, index, state, memory )
+
     class ActorCriticAgentConstructor(ActorCriticAgent):
-        def calculate_constraint( self, state:torch.Tensor, memory:Optional[Memory]=None ):
-            return calculate_constraint( self, state, memory )
+        def calculate_constraint(self, index: int, state: torch.Tensor, memory: Optional[Memory] = None ):
+            return calculate_constraint( self, index, state, memory )
 
     # Choose the Agent
     if agent_type == "s3":
@@ -231,7 +236,7 @@ def main( game_mode:str, agent_type:str, model_name:str="model", num_agents_to_t
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
         agent = agent_constructor(params)
-        train_data, test_data = train_model( env, agent, params, run_name ) 
+        train_data, test_data = train_model( env, agent, params, run_name, render ) 
 
         train_data_log.append( train_data )
         test_data_log.append( test_data )
@@ -263,7 +268,9 @@ if __name__ == '__main__':
     parser.add_argument('--game_mode',  type=str, default='cartpole')
     parser.add_argument('--agent_type', type=str, default='ac')
     parser.add_argument('--model_name', type=str, default='model')
+    parser.add_argument('--render', action='store_true', default=False)
     parser.add_argument('-n', type=int, default=1)
 
     args = parser.parse_args()
-    main( args.game_mode, args.agent_type, model_name=args.model_name, num_agents_to_train=args.n )
+    main( args.game_mode, args.agent_type, model_name=args.model_name,
+          num_agents_to_train=args.n, render=args.render )

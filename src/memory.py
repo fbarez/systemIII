@@ -7,16 +7,7 @@ class Memory:
         use_cuda = torch.cuda.is_available() if use_cuda is None else use_cuda
         self.device = torch.device("cuda" if use_cuda else "cpu")
 
-        self.curr_states = []
-        self.next_states = []
-        self.pred_states = []
-        self.action_means = []
-        self.actions = []
-        self.logprobs = []
-        self.rewards = []
-        self.values = []
-        self.constraints = []
-        self.dones = []
+        self.clear_memory()
 
     def safety_check(self):
         arrays = [
@@ -29,7 +20,8 @@ class Memory:
             self.rewards,
             self.values,
             self.constraints,
-            self.dones
+            self.dones,
+            self.infos
         ]
         L = len(arrays[0])
         for a in arrays:
@@ -51,12 +43,14 @@ class Memory:
         self.values = torch.stack(self.values).to(self.device)
         self.constraints = torch.stack(self.constraints).to(self.device)
         self.dones = np.array(self.dones)
+        self.infos
 
         # basic check to make sure that each array has the correct number of items
         self.safety_check()
         return self
 
-    def add(self, curr_state, next_state, pred_state, action_mean, action, action_logprob, reward, value, constraint, done):
+    def add(self, curr_state, next_state, pred_state, action_mean, action,
+            action_logprob, reward, value, constraint, done, info):
         # Note that here we should only add states that are already flattened
         self.curr_states.append(curr_state)
         self.next_states.append(next_state)
@@ -68,6 +62,9 @@ class Memory:
         self.values.append(value)
         self.constraints.append(constraint)
         self.dones.append(done)
+        
+        # List[dict]
+        self.infos.append(info)
 
     def clear_memory(self):
         self.curr_states = []
@@ -80,6 +77,7 @@ class Memory:
         self.values = []
         self.constraints = []
         self.dones = [] 
+        self.infos = [] 
     
     def flat_get(self, current_state_flat:torch.Tensor, key:str):
         if not self.state_mapping:

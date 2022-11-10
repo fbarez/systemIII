@@ -26,7 +26,7 @@ def convert_scores_format( input_filename, output_filename=None, mode='reward' )
             key, values = line[0], line[1:]
             original_data[key] = np.array( values )
 
-        vals_arr = np.array( original_data['val'], dtype=np.float )
+        vals_arr = np.array( original_data['val'], dtype=np.float32 )
         for i in np.array(original_data['episode'], dtype=np.int64)[::30]:
             vals = np.array( vals_arr[i:i+30] )
             data['mean'].append( np.mean( vals ) )

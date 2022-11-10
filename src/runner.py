@@ -21,7 +21,7 @@ def zero():
     return torch.tensor(0)
 
 # , 'Position Agent', next_observation['observe_qpos']
-class get_distance(object):
+class Runner(object):
     def __init__(self, env, agent=None):
         self.env = env
         self.agent = agent
@@ -38,7 +38,8 @@ class get_distance(object):
                         num_iter: int = 100,
                         render: bool  = False,
                         prev_run_data: Optional[Dict[str, list]] = None,
-                        training: bool = False ):
+                        training: bool = False,
+                        current_time: int = 0 ):
         """[summary]
         action_sampler: function that takes in a state and returns an action
         current_state: the initial state of the rollout
@@ -71,20 +72,23 @@ class get_distance(object):
 
         state_data = []        
         with torch.no_grad():
-            for _ in range(num_iter):
+            for i in range(num_iter):
                 # Get the next state
                 action, action_logprob, action_mean = action_sampler( curr_state, training )
                 [ next_state, reward, done, info ] = self.env.step(np.array( action.cpu() ))
                 curr_data = {"score": reward, **info} 
                 next_state = self.memory.flatten_state(next_state)
-                value = self.agent.critic(curr_state) if agent_has('critic') else zero()
+                value      = self.agent.critic(curr_state) if agent_has('critic') else zero()
                 pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
-                constraint = self.agent.calculate_constraint(next_state) if agent_has('calculate_constraint') else zero()
-
 
                 # Store the transition
-                self.memory.add(curr_state, next_state, pred_state, action_mean,
-                                action, action_logprob, reward, value, constraint, done)
+                self.memory.add(curr_state, next_state, pred_state, action_mean, action,
+                    action_logprob, reward, value, constraint=zero(), done=done, info=info)
+
+                # Calculate constraint and add to memory after (memory used to calculate)
+                if agent_has('calculate_constraint'):
+                    constraint = self.agent.calculate_constraint(i, next_state, self.memory)
+                    self.memory.constraints[-1] = constraint
 
                 for key, value in curr_data.items():
                     add_to_run_data(key, value, done)
@@ -99,7 +103,9 @@ class get_distance(object):
                     curr_state = next_state
 
                 actions = torch.stack([action]) if not type(action) is list else action
-                state_data.append([ done, reward, float(constraint), *actions.cpu().numpy(), 0, *next_state.cpu().numpy() ])
+                info_values = list( info.values() )
+                state_data.append([ current_time+i, done, reward, float(constraint), 
+                    *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
 
             assert type(curr_state) is torch.Tensor
             return curr_state, run_data, state_data

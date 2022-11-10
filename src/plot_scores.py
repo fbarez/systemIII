@@ -10,7 +10,8 @@ from matplotlib.figure import Figure
 from matplotlib.axes._axes import Axes
 from typing import Optional
 import seaborn as sns
-sns.set_theme()
+if hasattr( sns, 'set_theme' ):
+    sns.set_theme()
 
 # Hardcoded values
 plt.rcParams["figure.figsize"] = (9, 5)
@@ -112,8 +113,8 @@ if __name__ == '__main__':
     parser.add_argument('--yscale', type=float, default=1)
     parser.add_argument('--compare_line', type=float, default=None)
     parser.add_argument('--num_sigmas', type=float, default=1)
-    parser.add_argument('--sum_mode', action='store_true', default=False )
-    parser.add_argument('-v', '--verbose', action='store_true', default=False)
+    parser.add_argument('--sum_mode', action='store_true')
+    parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
     window_size = args.window_size
 
