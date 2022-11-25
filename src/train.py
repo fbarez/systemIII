@@ -1,5 +1,4 @@
 from tkinter import W
-from config import *
 from torch.multiprocessing import Pipe
 from agents import S3Agent, ActorCriticAgent, Agent
 from world import CreateWorld
@@ -9,7 +8,6 @@ from constraints import *
 from typing import Optional
 
 import numpy as np
-import copy
 import torch
 import time
 from runner import Runner
@@ -64,6 +62,10 @@ def train_model( env,
             writer = csv.writer(f)
             for state in state_data:
                 writer.writerow(state)
+
+    # Save parameters
+    params._dump( f"runs/params-{run_name}.json" )
+
     train_states, test_states = [], []
 
     # pre-test agent as a zero datapoint
@@ -198,7 +200,6 @@ def main( game_mode: str,
     # get parameters needed to construct the agent
     state_size  = curr_state.size()[0]
     action_size = env.action_space.n if not actions_continuous else env.action_space.shape[0]
-    print(" state_size:  ", state_size, "\n action_size: ", action_size)
 
     params = Params(
         state_size=state_size,
@@ -225,7 +226,11 @@ def main( game_mode: str,
         test_iter=test_iter,
         timestep_length=timestep_length,
         save_period=save_period,
+        cumulative_limit=5,
+        cost_lambda=0.15
     )
+    print(params)
+
     os.makedirs(params.checkpoint_dir, exist_ok=True)
 
     train_data_log = []

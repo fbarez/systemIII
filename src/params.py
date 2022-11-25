@@ -1,5 +1,9 @@
 from tkinter import W
+from tkinter.tix import DirTree
 from typing import Optional, Union
+
+import numpy as np
+import json
 
 class Params:
     def __init__(self,
@@ -28,6 +32,10 @@ class Params:
             test_iter:int=1000,
             timestep_length:Union[int,float]=1,
             save_period:int=0,
+            cost_lambda:float=0.05,
+            dist_lower_bound:float=0.3,
+            dist_upper_bound:float=0.6,
+            cumulative_limit:float=float("inf")
             ):
         
         # initialize hyperparameters / config
@@ -61,3 +69,37 @@ class Params:
         self.test_iter = test_iter
         self.timestep_length = timestep_length
         self.save_period = save_period
+
+        self.cost_lambda = cost_lambda
+        self.dist_lower_bound = dist_lower_bound
+        self.dist_upper_bound = dist_upper_bound
+        self.cumulative_limit = cumulative_limit
+
+    def _json( self ):
+        keys = dir( self )
+        data = {}
+        for key in keys:
+            if key[0] == '_':
+                continue
+            data[key] = getattr( self, key )
+        return data
+    
+    def _update( self, data ):
+        for key, value in data.items():
+            if key[0] == '_':
+                continue
+            setattr( self, key, value )
+        return self
+
+    def __str__( self ):
+        return self._json().__str__()
+
+    def _dump( self, filename ):
+        with open( filename, 'w' ) as f:
+            json.dump( self._json(), f )
+
+    def _load( self, filename ):
+        with open( filename, 'r' ) as f:
+            data = json.load( f )
+            self._update( data )
+        return self

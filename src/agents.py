@@ -58,9 +58,11 @@ class Agent:
 
         cumulative_rewards = np.zeros(len(rewards), dtype=np.float32)
         cumulative_rewards[-1] = rewards[-1]
+        lim = self.params.cumulative_limit
         for t in range( len(rewards)-2, -1, -1 ):
             cumulative_rewards[t] += rewards[t] 
             cumulative_rewards[t] += self.reward_decay*self.gae_lambda*cumulative_rewards[t+1]
+            cumulative_rewards[t] = np.median([ -lim, cumulative_rewards[t], lim ])
             #if dones[t]:
             #    cumulative_rewards[t] = rewards[t]
         cumulative_rewards = torch.tensor(cumulative_rewards).to(self.device)
@@ -69,13 +71,15 @@ class Agent:
     
     def calculate_cumulative_values(self, values=None, dones=None):
         values = self.memory.values if values is None else values
-        dones   = self.memory.dones if  dones is None else dones
+        dones  = self.memory.dones if  dones is None else dones
+        lim = self.params.cumulative_limit
 
         cumulative_values = np.zeros(len(values), dtype=np.float32)
         cumulative_values[-1] = values[-1]
         for t in range( len(values)-2, -1, -1 ):
             cumulative_values[t] += values[t]
             cumulative_values[t] += self.reward_decay*self.gae_lambda*cumulative_values[t+1]
+            cumulative_values[t] = np.median([ -lim, cumulative_values[t], lim ])
             if not dones[t]:
                 cumulative_values[t] -= self.reward_decay*values[t+1]
         cumulative_values = torch.tensor(cumulative_values).to(self.device)
@@ -154,8 +158,12 @@ class S3Agent(Agent):
             cumulative_rewards:torch.Tensor,
             constraints_arr:torch.Tensor
             ):
+        # add negative term to reward for cumulative cost cost
+        cumulative_cost = self.calculate_cumulative_rewards( torch.tensor(constraints_arr) )
+        return cumulative_rewards - self.params.cost_lambda*cumulative_cost
+
+        # multiply cumulative reward by constraints
         # constrained_rewards = torch.min( cumulative_rewards, cumulative_rewards*constraints_arr )
-        # code for multiplying constraints by cumulative reward
         delta_arr = torch.zeros_like( cumulative_rewards )
         constrained_rewards = torch.zeros_like( cumulative_rewards )
         constrained_rewards[-1] = cumulative_rewards[-1] * constraints_arr[-1]

@@ -3,13 +3,8 @@ from re import I
 import warnings
 warnings.filterwarnings('ignore')
 
-import safety_gym
-import gym
-from time import time
 import numpy as np
-import pandas as pd
 import torch
-from world import CreateWorld
 from memory import Memory
 from typing import Optional, Callable
 from collections import defaultdict
@@ -156,15 +151,3 @@ class Runner(object):
         actions = np.array(actions)
 
         return distances, weight_literal, probs, agent_positions, hazard_positions, actions
-
-if __name__ == "__main__":    
-    print("\nRunning get_distance():")
-    env = CreateWorld()
-    runner = get_distance(env)
-    runner.n_step_rollout( num_iter=1000, render=True)
-    distances, weight_literal, probs, agent_positions, hazard_positions, actions = runner.extract_distances()
-    print("State Values:", next_observations)
-    print("State Values:", np.array([ flatten_state(x) for x in next_observations ]) )
-    print("reward we want:", np.array([ rewards[i]*distances[i] for i in range(len(rewards)) ]).flatten()[:10] )
-    # print("Running get_distance() completed successfully")
-    # #print("Distances to objects:", distances, "Weight of Literals:", weights, "State observation values:", state_value, "Agent Position:", agent_position)

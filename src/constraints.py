@@ -28,7 +28,11 @@ def calculate_constraint_cartpole( self: Agent,
     constraint = ( 1 - torch.clamp(angle_remaining, 0, hazardous_distance)*(1/hazardous_distance) )
     return 1 - constraint
 
-def calculate_constraint_cargoal2_v0( self, index, state, memory=None):
+def calculate_constraint_cargoal2_v0( self: Agent,
+        index: int,
+        state: Tensor,
+        memory: Optional[Memory] = None
+        ):
     memory = memory if (not memory is None) else self.memory
     cost = memory.infos[index]['cost']
     return torch.tensor(cost).to(self.device)
@@ -56,8 +60,8 @@ def calculate_constraint_cargoal2_v2( self: Agent,
         memory: Optional[Memory] = None,
         ):
     max_lidar_range = 5
-    min_dist = 0.3
-    max_dist = 0.5
+    min_dist = self.params.dist_lower_bound
+    max_dist = self.params.dist_upper_bound
     memory = memory if not memory is None else self.memory
 
     hazards_lidar = memory.flat_get( state, 'hazards_lidar' )
