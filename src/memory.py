@@ -76,6 +76,8 @@ class Memory:
         cdeltas = costs[:-1] + self.gamma * cost_values[1:] - cost_values[:-1]
         self.cost_advantages = discount_cumsum(cdeltas, self.cost_decay*self.cost_lambda)
         self.cost_returns = discount_cumsum(costs, self.cost_decay)[:-1]
+        
+        return self
 
     def prepare(self, calculate_advantages=False):
         if calculate_advantages:
@@ -98,6 +100,7 @@ class Memory:
 
         # basic check to make sure that each array has the correct number of items
         self.safety_check()
+
         return self
 
     def add(self, curr_state, next_state, pred_state, action_mean, action,
@@ -116,6 +119,8 @@ class Memory:
         
         # List[dict]
         self.infos.append(info)
+
+        return self
 
     def clear_memory(self):
         self.curr_states = []
@@ -136,6 +141,8 @@ class Memory:
         self.returns = []
         self.cost_advantages = []
         self.cost_returns = []
+
+        return self
     
     def flat_get(self, current_state_flat:torch.Tensor, key:str):
         if not self.state_mapping:
@@ -156,6 +163,7 @@ class Memory:
             state_mapping[key] = [starting_index, ending_index]
         self.state_mapping = state_mapping
         state_flat = torch.tensor(state_flat).float().to(self.device)
+
         return state_flat, state_mapping
 
     def flatten_state(self, state:torch.Tensor, return_mapping:bool=False ):
@@ -172,4 +180,5 @@ class Memory:
         for item in state.values():
             state_flat.extend(item.flatten())
         state_flat = torch.tensor(state_flat).float().to(self.device)
+
         return state_flat
