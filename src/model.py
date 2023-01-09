@@ -1,3 +1,4 @@
+from typing_extensions import Self
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
@@ -7,6 +8,7 @@ import math
 from torch.nn import init
 from memory import Memory
 from params import Params
+from torch import Tensor
 import os
 
 from torch.distributions import MultivariateNormal, Categorical
@@ -195,3 +197,49 @@ class CriticNetwork(nn.Module):
 
     def load_checkpoint(self):
         self.load_state_dict(torch.load(self.checkpoint_file))
+
+class PenaltyModel:
+    """ Pytorch Alternative to penalty learning done in safety-starter-agents.
+    See original implementation here:
+    https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/run_agent.py#L134
+    """
+    def __init__(self, params:Params):
+        self.cost_limit = params.cost_limit # default 25
+        self.penalty_init = params.penalty_init # default 1.
+        self.penalty_lr = params.penalty_lr # default 5e-2
+        self.learn_penalty = params.learn_penalty # depends on if penalty is used
+        self.penalty_param_loss = params.penalty_param_loss # default True
+
+        # initialize penalty parameter
+        penalty_param_init = np.log( max( np.exp(self.penalty_init)-1, 1e-8 ) )
+        self.penalty_param = torch.nn.param(penalty_param_init, dtype=torch.float32)
+
+        # initialize adam optimizer
+        self.optimizer = torch.optim.Adam(self.penalty_param, lr=self.penalty_lr) 
+
+    def calculate_penalty(self):
+        """Calculates the penalty based on the penalty parameters"""
+        # calculate penalty based on parameter
+        penalty = torch.nn.softplus(self.penalty_param)
+        return penalty
+
+    def use_penalty(self):
+        """Returns penalty but without training graphs. i.e: torch.nograd()"""
+        with torch.no_grad():
+            return self.calculate_penalty()
+
+    def learn(self, curr_cost: Tensor):
+        # learn if needed
+        if self.learn_penalty:
+            if self.penalty_param_loss:
+                penalty_loss = -self.penalty_param * ( curr_cost - self.cost_limit )
+            
+            else:
+                penalty = self.calculate_penalty()
+                penalty_loss = - penalty * ( curr_cost - self.cost_limit )
+
+            self.optimizer.zero_grad()
+            penalty_loss.backward()
+            self.optimizer.step() 
+        
+        return self
