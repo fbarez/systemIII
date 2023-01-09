@@ -1,11 +1,29 @@
 import numpy as np
 import torch
+import scipy
+
+def discount_cumsum(x, discount):
+    """
+    magic from rllab for computing discounted cumulative sums of vectors.
+    input: 
+        vector x, 
+        [x0, 
+         x1, 
+         x2]
+    output:
+        [x0 + discount * x1 + discount^2 * x2,  
+         x1 + discount * x2,
+         x2]
+    """
+    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+
 
 class Memory:
-    def __init__(self, use_cuda=None, state_mapping=None):
+    def __init__(self, params, use_cuda=None, state_mapping=None):
         self.state_mapping = state_mapping
         use_cuda = torch.cuda.is_available() if use_cuda is None else use_cuda
         self.device = torch.device("cuda" if use_cuda else "cpu")
+        self.params = params
 
         self.clear_memory()
 
@@ -23,6 +41,15 @@ class Memory:
             self.dones,
             self.infos
         ]
+
+        if self.advantages_calculated:
+            arrays += [
+                self.advantages,
+                self.returns,
+                self.cost_advantages,
+                self.cost_returns,
+            ]
+
         L = len(arrays[0])
         for a in arrays:
             assert len(a) == L
@@ -32,7 +59,28 @@ class Memory:
     def tensorify(self, array):
         return torch.stack([torch.tensor(a) for a in array]).float().to(self.device)
 
-    def prepare(self):
+    def calculate_advantages(self, last_value=0, last_cost_value=0):
+        """ Calculates advantages for reward and cost.
+        Copied from:
+        https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/buffer.py
+        """
+
+        rewards = np.append(np.array(self.rewards), last_value)
+        values = np.append(np.array(self.values), last_value)
+        deltas = rewards[:-1] + self.reward_decay * values[1:] - values[:-1]
+        self.advantages = discount_cumsum(deltas, self.reward_decay * self.gae_lambda)
+        self.returns = discount_cumsum(rewards, self.gamma)[:-1]
+
+        costs = np.append(np.array(self.costs), last_cost_value)
+        cost_values = np.append(np.array(self.cost_values), last_cost_value)
+        cdeltas = costs[:-1] + self.gamma * cost_values[1:] - cost_values[:-1]
+        self.cost_advantages = discount_cumsum(cdeltas, self.cost_decay*self.cost_lambda)
+        self.cost_returns = discount_cumsum(costs, self.cost_decay)[:-1]
+
+    def prepare(self, calculate_advantages=False):
+        if calculate_advantages:
+            self.calculate_advantages()
+
         self.curr_states = torch.stack(self.curr_states).to(self.device)
         self.next_states = torch.stack(self.next_states).to(self.device)
         self.pred_states = torch.stack(self.pred_states).to(self.device)
@@ -44,6 +92,9 @@ class Memory:
         self.constraints = torch.stack(self.constraints).to(self.device)
         self.dones = np.array(self.dones)
         self.infos
+
+        if self.advantages_calculated:
+            self.advantages = torch.stack()
 
         # basic check to make sure that each array has the correct number of items
         self.safety_check()
@@ -77,7 +128,14 @@ class Memory:
         self.values = []
         self.constraints = []
         self.dones = [] 
-        self.infos = [] 
+        self.infos = []
+
+        # calculated arrays
+        self.advantages_calculated = False
+        self.advantages = []
+        self.returns = []
+        self.cost_advantages = []
+        self.cost_returns = []
     
     def flat_get(self, current_state_flat:torch.Tensor, key:str):
         if not self.state_mapping:
@@ -115,4 +173,3 @@ class Memory:
             state_flat.extend(item.flatten())
         state_flat = torch.tensor(state_flat).float().to(self.device)
         return state_flat
-    
