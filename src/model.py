@@ -162,9 +162,10 @@ class PredictorNetwork(nn.Module):
         self.load_state_dict(torch.load(self.checkpoint_file))
 
 class CriticNetwork(nn.Module):
-    def __init__(self, params:Params):
+    def __init__(self, params:Params, name='critic'):
         super(CriticNetwork, self).__init__()
         p = params
+        self.name = name
         self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
         self.update_checkpoint(p)
@@ -185,7 +186,8 @@ class CriticNetwork(nn.Module):
 
     def update_checkpoint(self, params:Params):
         self.checkpoint_file = os.path.join(
-            params.checkpoint_dir, params.agent_type+'_critic_'+params.instance_name
+            params.checkpoint_dir,
+            params.agent_type + f"_{self.name}_" + params.instance_name
         )
     
     def save_checkpoint(self):
