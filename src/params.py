@@ -18,6 +18,9 @@ class Params:
             policy_clip:float=0.2,
             action_std_init:float=0.6,
             kl_target:float=0,
+            learn_penalty=True,
+            cost_decay:float=0.99,
+            cost_lambda:float=0.95,
             use_cuda:bool=True,
             checkpoint_dir:str="tmp/model",
             instance_name:str="",
@@ -32,11 +35,10 @@ class Params:
             test_iter:int=1000,
             timestep_length:Union[int,float]=1,
             save_period:int=0,
-            cost_lambda:float=0.05,
             dist_lower_bound:float=0.3,
             dist_upper_bound:float=0.6,
-            cumulative_limit:float=float("inf")
-            ):
+            cumulative_limit:float=float("inf"),
+        ):
         
         # initialize hyperparameters / config
         self.state_size   = state_size
@@ -48,9 +50,14 @@ class Params:
         self.learning_rate = learning_rate
         self.reward_decay = reward_decay
         self.gae_lambda = gae_lambda
+
         self.policy_clip = policy_clip
         self.action_std = action_std_init
         self.kl_target = kl_target
+
+        self.learn_penalty = learn_penalty
+        self.cost_decay = cost_decay
+        self.cost_lambda = cost_lambda
 
         self.use_cuda = use_cuda
 
@@ -70,10 +77,11 @@ class Params:
         self.timestep_length = timestep_length
         self.save_period = save_period
 
-        self.cost_lambda = cost_lambda
+        # calculate distance from car to object, and use to calculate cost
         self.dist_lower_bound = dist_lower_bound
         self.dist_upper_bound = dist_upper_bound
         self.cumulative_limit = cumulative_limit
+
 
     def _json( self ):
         keys = dir( self )
