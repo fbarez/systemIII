@@ -1,17 +1,14 @@
-from re import I
-from tkinter import W
+from typing_extensions import Self
 import numpy as np
 
 import time
-import torch.nn.functional as F
-import torch.nn as nn
+from regex import W
 import torch
-import torch.optim as optim
 from typing import Optional
 
 
 from memory import Memory
-from model import ActorNetwork, PredictorNetwork, CriticNetwork
+from model import ActorNetwork, PredictorNetwork, CriticNetwork, PenaltyModel
 from params import Params
 
 class Agent:
@@ -51,49 +48,7 @@ class Agent:
             raise Exception("Agent has no attribute 'actor'")
         action, action_logprob, action_mean = self.actor.get_action(state, training=training)
         return action, action_logprob, action_mean
-
-    def calculate_cumulative_rewards( self, rewards=None, dones=None ):
-        rewards = self.memory.rewards if rewards is None else rewards
-        dones   = self.memory.dones   if   dones is None else dones
-
-        cumulative_rewards = np.zeros(len(rewards), dtype=np.float32)
-        cumulative_rewards[-1] = rewards[-1]
-        lim = self.params.cumulative_limit
-        for t in range( len(rewards)-2, -1, -1 ):
-            cumulative_rewards[t] += rewards[t] 
-            cumulative_rewards[t] += self.reward_decay*self.gae_lambda*cumulative_rewards[t+1]
-            cumulative_rewards[t] = np.median([ -lim, cumulative_rewards[t], lim ])
-            #if dones[t]:
-            #    cumulative_rewards[t] = rewards[t]
-        cumulative_rewards = torch.tensor(cumulative_rewards).to(self.device)
-
-        return cumulative_rewards
-    
-    def calculate_cumulative_values(self, values=None, dones=None):
-        values = self.memory.values if values is None else values
-        dones  = self.memory.dones if  dones is None else dones
-        lim = self.params.cumulative_limit
-
-        cumulative_values = np.zeros(len(values), dtype=np.float32)
-        cumulative_values[-1] = values[-1]
-        for t in range( len(values)-2, -1, -1 ):
-            cumulative_values[t] += values[t]
-            cumulative_values[t] += self.reward_decay*self.gae_lambda*cumulative_values[t+1]
-            cumulative_values[t] = np.median([ -lim, cumulative_values[t], lim ])
-            if not dones[t]:
-                cumulative_values[t] -= self.reward_decay*values[t+1]
-        cumulative_values = torch.tensor(cumulative_values).to(self.device)
-
-        return cumulative_values
-
-    def generate_advantages( self, rewards=None, values=None, dones=None ):
-        cumulative_rewards = self.calculate_cumulative_rewards()
-        cumulative_values  = self.calculate_cumulative_values()
-        
-        advantages = cumulative_rewards - cumulative_values
-
-        return advantages
-    
+ 
     def generate_batches(self):
         n_states = len(self.memory.curr_states) 
         batch_start = np.arange(0, n_states, self.batch_size) 
@@ -141,12 +96,18 @@ class S3Agent(Agent):
         self.name = "s3"
         self.actor     = ActorNetwork( params )
         self.predictor = PredictorNetwork( params )
-        self.critic    = CriticNetwork( params )
+        self.value_critic = CriticNetwork( params, "value_critic" )
 
-        self.models = [ self.actor, self.predictor, self.critic ]
+        self.models = [ self.actor, self.predictor, self.value_critic ]
+
+        if params.separate_cost: 
+            self.cost_critic = CriticNetwork( params, "cost_critic" )
+            self.models.append( self.cost_critic )
+        
+        self.penalty = PenaltyModel( params ) 
 
     def calculate_constraint( self, index, state, memory ):
-        return 1
+        raise NotImplementedError
 
     def calculate_all_constraints(self, states):
         constraints = torch.zeros(len(states), dtype=torch.float32).to(self.device)
@@ -154,99 +115,9 @@ class S3Agent(Agent):
             constraints[i] = self.calculate_constraint(i, state, self.memory)
         return constraints
 
-    def calculate_constrained_rewards( self,
-            cumulative_rewards:torch.Tensor,
-            constraints_arr:torch.Tensor
-            ):
-        # add negative term to reward for cumulative cost cost
-        cumulative_cost = self.calculate_cumulative_rewards( torch.tensor(constraints_arr) )
-        return cumulative_rewards - self.params.cost_lambda*cumulative_cost
-
-        # multiply cumulative reward by constraints
-        # constrained_rewards = torch.min( cumulative_rewards, cumulative_rewards*constraints_arr )
-        delta_arr = torch.zeros_like( cumulative_rewards )
-        constrained_rewards = torch.zeros_like( cumulative_rewards )
-        constrained_rewards[-1] = cumulative_rewards[-1] * constraints_arr[-1]
-        for i in range(len(cumulative_rewards)-2, -1, -1):
-            reward_diff = cumulative_rewards[i] * ( 1 - constraints_arr[i] )
-            options = [ torch.tensor(0), reward_diff, self.reward_decay*delta_arr[i+1] ]
-            delta_arr[i] = torch.max( torch.stack( options ) )
-            constrained_rewards[i] = cumulative_rewards[i] - delta_arr[i]
-        del delta_arr
-        return constrained_rewards
-
     def learn(self):
-        # prepare advantages and other tensors used for training
-        memory = self.memory.prepare()
-        cumulative_rewards = self.calculate_cumulative_rewards()
-        cumulative_values  = self.calculate_cumulative_values()
-        constraints_arr = self.calculate_all_constraints(self.memory.next_states)
-        constrained_rewards = self.calculate_constrained_rewards( 
-            cumulative_rewards=cumulative_rewards, constraints_arr=constraints_arr )
-        advantages_arr = constrained_rewards - cumulative_values 
+        return learn(self)
 
-        # begin training loops
-        for epoch in range(self.params.n_epochs):
-            batches = self.generate_batches()
-
-            for batch in batches:
-                # get required info from batches
-                curr_states  = memory.curr_states[batch]
-                next_states  = memory.next_states[batch]
-                old_logprobs = memory.logprobs[batch]
-                actions      = memory.actions[batch]
-                rewards      = memory.rewards[batch]
-                values       = memory.values[batch]
-                advantages   = advantages_arr[batch]
-                constraints  = constraints_arr[batch]
-
-                # train in two separate steps.
-                # Train the predictor
-                pred_states = self.predictor(curr_states, actions)
-                predictor_loss = torch.nn.HuberLoss("mean")(next_states, pred_states)
-                self.predictor.optimizer.zero_grad()
-                predictor_loss.backward()
-                self.predictor.optimizer.step()
-
-                # Train the actor and critic
-                # run the models
-                new_logprobs, entropies = self.actor.calculate_entropy(curr_states, actions)
-                pred_states  = self.predictor(curr_states, actions)
-                critic_value = self.critic(pred_states).squeeze()
-
-                # calculate actor loss
-                prob_ratio = ( new_logprobs - old_logprobs ).exp()
-                clip = self.params.policy_clip
-                weighted_probs = advantages * prob_ratio
-                weighted_clipped_probs = torch.clamp(prob_ratio, 1-clip,1+clip)*advantages
-                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
-
-                # calculate critic loss
-                returns = advantages + values.squeeze()
-                returns = torch.min( returns, constraints * returns )
-                critic_loss = torch.nn.HuberLoss("mean")(returns, critic_value)
-
-                # backprop the loss
-                total_loss = actor_loss + 0.5*critic_loss - 0.01*entropies.mean() 
-                self.actor.optimizer.zero_grad()
-                self.critic.optimizer.zero_grad()
-                self.predictor.optimizer.zero_grad()
-                total_loss.backward()
-                self.actor.optimizer.step()
-                self.critic.optimizer.step()
-
-            # calculate KL divergence to check for early stopping
-            do_early_stop, kl = self.check_kl_early_stop()
-            if do_early_stop:
-                print("Early stopping at epoch {} with KL divergence {}".format(epoch, kl))
-                break
-        
-        self.memory.clear_memory() 
-
-        losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }
-        return losses
-
-# not yet working
 class ActorCriticAgent( Agent ):
        
     def __init__(self, params:Params, memory:Optional[Memory]=None):
@@ -254,58 +125,144 @@ class ActorCriticAgent( Agent ):
 
         self.name = "ac"
         self.actor  = ActorNetwork( params )
-        self.critic = CriticNetwork( params )
-        
-        self.models = [ self.actor, self.critic ]
- 
+        self.value_critic = CriticNetwork( params, "value_critic" )
+
+        self.models = [ self.actor, self.value_critic ]
+
+        if params.learn_penalty:
+            self.cost_critic = CriticNetwork( params, "cost_critic" )
+            self.models.append( self.cost_critic )
+
+        self.penalty = PenaltyModel( params ) 
+
     def learn(self):
-        # prepare advantages and other tensors used for training
-        memory = self.memory.prepare()
-        advantages_arr = self.generate_advantages()
+        return learn(self)
+ 
+def learn(agent: Agent):
+    # prepare advantages and other tensors used for training
+    agent.memory.calculate_advantages()
+    memory = agent.memory.prepare()
+    kl_target_reached = False
 
-        # begin training loops
-        for epoch in range(self.params.n_epochs):
-            batches = self.generate_batches()
+    # begin training loops
+    for epoch in range(agent.params.n_epochs):
 
-            for batch in batches:
-                # get required info from batches
-                states       = memory.curr_states[batch]
-                old_logprobs = memory.logprobs[batch]
-                actions      = memory.actions[batch]
-                values       = memory.values[batch]
-                advantages   = advantages_arr[batch]
+        # Fine-tune the penalty parameter
+        agent.penalty.learn( memory.episode_costs )
+        curr_penalty = agent.penalty.get_penalty()
 
-                # run the models
-                new_logprobs, entropies = self.actor.calculate_entropy(states, actions)
-                critic_value = self.critic(states)
+        # Create the batches for training agent networks
+        batches = agent.generate_batches()
+        for batch in batches:
+            # get required info from batches
+            curr_states  = memory.curr_states[batch]
+            next_states  = memory.next_states[batch]
+            old_logprobs = memory.logprobs[batch]
+            actions      = memory.actions[batch]
 
-                # calculate actor loss
-                prob_ratio = ( new_logprobs - old_logprobs ).exp()
-                clip = self.params.policy_clip
-                weighted_probs = advantages * prob_ratio
-                weighted_clipped_probs = torch.clamp(prob_ratio, 1-clip,1+clip)*advantages
-                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
+            returns         = memory.returns[batch]
+            cost_returns    = memory.cost_returns[batch]
+            advantages      = memory.advantages[batch]
+            cost_advantages = memory.cost_advantages[batch]
 
-                # calculate critic loss
-                returns = advantages + values
-                critic_loss = torch.nn.HuberLoss()(returns, critic_value)
-                critic_loss = critic_loss.mean()
+            # Train in two separate steps:
+            # 1. Train the Predictor
+            # 2. Train the Actor and Critic(s) together
 
-                # backprop the loss
-                total_loss = actor_loss + 0.5*critic_loss - 0.01*entropies.mean() 
-                self.actor.optimizer.zero_grad()
-                self.critic.optimizer.zero_grad()
-                total_loss.backward()
-                self.actor.optimizer.step()
-                self.critic.optimizer.step()
+            # initialize test variables
+            has_predictor = hasattr(agent, 'predictor')
+            has_cost_critic = hasattr(agent, 'cost_critic')
 
-            # calculate KL divergence to check for early stopping
-            do_early_stop, kl = self.check_kl_early_stop()
-            if do_early_stop:
-                print("Early stopping at epoch {} with KL divergence {}".format(epoch, kl))
-                break
+            # 1. Train the predictor (if the agent has one)
+            if hasattr(agent, 'predictor'):
+                # run predictor
+                pred_states = agent.predictor(curr_states, actions)
 
-        self.memory.clear_memory() 
+                # Get loss
+                loss_fn = torch.nn.MSELoss() # torch.nn.HuberLoss("mean")
+                predictor_loss = loss_fn(next_states, pred_states)
 
-        losses = { 'actor': actor_loss, 'critic': critic_loss }
-        return losses
+                # Update predictor
+                agent.predictor.optimizer.zero_grad()
+                predictor_loss.backward()
+                agent.predictor.optimizer.step()
+
+            # 2. Train the models for the actor and critic(s)
+            # 2.1 Run all the models to build gradients:
+            # a) Actor
+            new_logprobs, entropies = agent.actor.calculate_entropy(curr_states, actions)
+            
+            # b) Run predictor, or just use current states
+            states = curr_states
+            if has_predictor:
+                states = agent.predictor(curr_states, actions)
+            
+            # c) Run value critic
+            value_critic_value = agent.value_critic(states).squeeze()
+
+            # d) Run cost critic, if needed
+            if has_cost_critic:
+                cost_critic_value   = agent.cost_critic(states).squeeze()
+
+            # 2.2 Calculate KL divergence of Actor policy.
+            if not kl_target_reached:
+                do_early_stop, kl = agent.check_kl_early_stop()
+                if do_early_stop:   
+                    print(f"Early stopping at epoch {epoch} with KL divergence {kl}")
+                kl_target_reached = True
+
+            # 2.3 Calculate actor loss, only if KL divergence is low enough
+            actor_loss = 0
+            if not kl_target_reached:
+                # calculate scaled advantages
+                prob_ratio = ( new_logprobs - old_logprobs ).exp() # Likelihood ratio
+                clip = agent.params.policy_clip
+                surrogate_advantages = advantages * prob_ratio # scaled advantage
+
+                # if using PPO, calculate scaled + clipped advantages
+                if agent.params.clipped_adv:
+                    scaled_clipped_advantages = \
+                        torch.clamp(prob_ratio, 1-clip, 1+clip) * advantages
+                    surrogate_advantages = \
+                        torch.min(surrogate_advantages, scaled_clipped_advantages)
+                
+                actor_objective = surrogate_advantages.mean()
+
+                # Possibly use cost advantages.
+                if has_cost_critic:
+                    surrogate_cost = (prob_ratio * cost_advantages).mean()
+                    actor_objective -= curr_penalty * surrogate_cost
+                    actor_objective /= (1 + curr_penalty) # ? see safety-starter-agents
+
+                # Loss for actor policy is negative objective
+                actor_loss = - actor_objective
+
+            # 2.4 Calculate loss for value critic
+            value_critic_loss = torch.mean((returns - value_critic_value)**2)
+            critic_loss = value_critic_loss
+
+            # 2.5 Calculate loss for cost critic, if needed
+            if has_cost_critic:
+                cost_critic_loss  = torch.mean((cost_returns - cost_critic_value)**2)
+                critic_loss += cost_critic_loss
+
+            # 2.6 Add optional entropy loss term
+            entropy_regularization = agent.params.entropy_regularization
+            if entropy_regularization != 0:
+                entropy_loss += entropy_regularization * entropies.mean()
+
+            # 2.7 Calculate total loss for actor and critics
+            total_loss = actor_loss + 0.5*critic_loss + entropy_loss
+            for model in agent.models:
+                model.optimizer.zero_grad()
+
+            # 2.8 Backprop loss for actor and critic(s)
+            total_loss.backward()
+            agent.actor.optimizer.step()
+            agent.value_critic.optimizer.step()
+            agent.cost_critic.step() if (not agent.reward_penalized) else None
+ 
+    agent.memory.clear_memory() 
+
+    losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }
+    return losses
