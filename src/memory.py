@@ -28,7 +28,9 @@ class Memory:
         self.clear_memory()
 
     def safety_check(self):
-        arrays = [
+        # basic sanity check, to make sure all arrays are initialized correctly
+        # ensure all arrays that recored each timestep are equal length
+        timestep_arrays = [
             self.curr_states,
             self.next_states,
             self.pred_states,
@@ -44,16 +46,27 @@ class Memory:
         ]
 
         if self.advantages_calculated:
-            arrays += [
+            timestep_arrays += [
                 self.advantages,
                 self.returns,
                 self.cost_advantages,
                 self.cost_returns,
             ]
 
-        L = len(arrays[0])
-        for a in arrays:
-            assert len(a) == L
+        n_timesteps = len(timestep_arrays[0])
+        for a in timestep_arrays:
+            assert len(a) == n_timesteps
+
+        # ensure all arrays that recored each episode are equal length
+        episode_arrays = [
+            self.done_indices,
+            self.episode_costs,
+            self.episode_rewards,
+        ]
+
+        n_episodes = len(self.done_indices)
+        for a in episode_arrays:
+            assert len(a) == n_episodes
 
         return True
 
@@ -62,7 +75,7 @@ class Memory:
 
     def calculate_advantages(self, last_value=0, last_cost_value=0):
         """ Calculates advantages for reward and cost.
-        Copied from:
+        Partially copied from:
         https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/buffer.py
         """
         # extract necessary parameters
@@ -84,6 +97,16 @@ class Memory:
         cost_deltas = costs[:-1] + self.gamma * cost_values[1:] - cost_values[:-1]
         self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
         self.cost_returns = discount_cumsum(costs, self.cost_decay)[:-1]
+
+        # Use normalization / rescaling of the advantage values
+        eps = self.params.normalization_epsilon
+        adv_mean, adv_std = scipy.norm.stats.fit(self.advantages)
+        self.advantages = (self.advantages - adv_mean) / (adv_std + eps)
+
+        # Center, but do NOT rescale advantages for cost gradient
+        cost_adv_mean = np.mean(self.cost_advantages)
+        self.cost_advantages -= cost_adv_mean
+
         
         return self
 
@@ -91,6 +114,7 @@ class Memory:
         if calculate_advantages:
             self.calculate_advantages()
 
+        # arrays that record data for each timestep
         self.curr_states = torch.stack(self.curr_states).to(self.device)
         self.next_states = torch.stack(self.next_states).to(self.device)
         self.pred_states = torch.stack(self.pred_states).to(self.device)
@@ -102,11 +126,18 @@ class Memory:
         self.costs = torch.stack(self.costs).to(self.device)
         self.cost_values = torch.stack(self.cost_values).to(self.device)
         self.dones = np.array(self.dones)
-        self.done_indices = np.array(self.done_indices)
         self.infos
 
         if self.advantages_calculated:
-            self.advantages = torch.stack()
+            self.advantages = torch.tensor(self.advantages)
+            self.returns = torch.tensor(self.returns)
+            self.cost_advantages = torch.tensor(self.cost_advantages)
+            self.cost_values = torch.tensor(self.cost_values)
+        
+        # arrays that record data for each episode
+        self.done_indices = np.array(self.done_indices)
+        self.episode_costs = np.array(self.episode_costs[:-1])
+        self.episode_rewards = np.array(self.episode_rewards[:-1])
 
         # basic check to make sure that each array has the correct number of items
         self.safety_check()
@@ -128,8 +159,14 @@ class Memory:
         self.cost_values.append(cost)
         self.dones.append(done)
 
+        # episode values
+        self.episode_costs[-1] += cost
+        self.episode_rewards[-1] += reward
+
         if done:
             self.done_indices.append(len(self.dones)-1)
+            self.episode_costs.append(0)
+            self.episode_rewards.append(0)
         
         # List[dict]
         self.infos.append(info)
@@ -148,8 +185,12 @@ class Memory:
         self.costs = []
         self.cost_values = []
         self.dones = []
-        self.done_indices = [] 
         self.infos = []
+
+        # episode arrays
+        self.done_indices = [] 
+        self.episode_costs = [0]
+        self.episode_rewards = [0]
 
         # calculated arrays
         self.advantages_calculated = False
