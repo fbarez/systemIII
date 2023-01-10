@@ -228,15 +228,15 @@ class PenaltyModel:
         with torch.no_grad():
             return self.calculate_penalty()
 
-    def learn(self, curr_cost: Tensor):
+    def learn(self, episode_costs: Tensor):
         # learn if needed
         if self.learn_penalty:
             if self.penalty_param_loss:
-                penalty_loss = -self.penalty_param * ( curr_cost - self.cost_limit )
+                penalty_loss = - self.penalty_param * (episode_costs-self.cost_limit)
             
             else:
                 penalty = self.calculate_penalty()
-                penalty_loss = - penalty * ( curr_cost - self.cost_limit )
+                penalty_loss = - penalty * (episode_costs - self.cost_limit)
 
             self.optimizer.zero_grad()
             penalty_loss.backward()
