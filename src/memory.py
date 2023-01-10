@@ -5,6 +5,7 @@ given run, and processes the returned values into advantage arrays.
 import numpy as np
 import torch
 import scipy
+from scipy.signal import lfilter
 from params import Params
 
 def discount_cumsum(x, discount):
@@ -20,20 +21,22 @@ def discount_cumsum(x, discount):
          x1 + discount * x2,
          x2]
     """
-    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+    return lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
 class Memory:
     """ Memory class which saves data at every timestep for the given run.
     Also processes the returned values into advantages.
     """
-    def __init__(self, params:Params=None, use_cuda=None, state_mapping=None):
+    def __init__(self, params:Params = None, use_cuda = None, state_mapping = None):
         if params is None:
             params = Params(0,0)
+        self.params = params
+        assert isinstance(self.params, Params)
+
         self.state_mapping = state_mapping
         use_cuda = torch.cuda.is_available() if use_cuda is None else use_cuda
         self.device = torch.device("cuda" if use_cuda else "cpu")
-        self.params = params
 
         self.clear_memory()
 
@@ -110,14 +113,14 @@ class Memory:
 
         # Use normalization / rescaling of the advantage values
         eps = self.params.normalization_epsilon
-        adv_mean, adv_std = scipy.norm.stats.fit(self.advantages)
+        adv_mean, adv_std = scipy.stats.norm.fit(self.advantages)
         self.advantages = (self.advantages - adv_mean) / (adv_std + eps)
 
         # Center, but do NOT rescale advantages for cost gradient
         cost_adv_mean = np.mean(self.cost_advantages)
         self.cost_advantages -= cost_adv_mean
 
-
+        self.advantages_calculated = True
         return self
 
     def prepare(self, calculate_advantages=False):
@@ -139,10 +142,10 @@ class Memory:
         self.infos = self.infos
 
         if self.advantages_calculated:
-            self.advantages = torch.tensor(self.advantages)
-            self.returns = torch.tensor(self.returns)
-            self.cost_advantages = torch.tensor(self.cost_advantages)
-            self.cost_values = torch.tensor(self.cost_values)
+            self.advantages = torch.tensor(self.advantages.copy())
+            self.returns = torch.tensor(self.returns.copy())
+            self.cost_advantages = torch.tensor(self.cost_advantages.copy())
+            self.cost_returns = torch.tensor(self.cost_returns.copy())
 
         # arrays that record data for each episode
         self.done_indices = np.array(self.done_indices)

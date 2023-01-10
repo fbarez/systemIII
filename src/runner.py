@@ -87,28 +87,36 @@ class Runner(object):
             with torch.no_grad():
                 pred_state = agent.run_if_has('predictor',state=curr_state, action=action)
                 value      = agent.run_if_has('value_critic', state=next_state)
-                cost_value = agent.run_if_has('cost_critic',  state=next_state)
-
-            # Save cost differently depending on if reward is penalized
-            _reward, _cost, _cost_value = reward, cost, cost_value
-            if agent.reward_penalized:
-                curr_penalty = agent.penalty.use_penalty()
-                reward_total = reward - curr_penalty * cost
-                reward_total = reward_total / (1 + curr_penalty)
-                _reward, _cost, _cost_value  = reward_total, 0, 0
 
             # Store the transition. Let cost be zero for now, as it is calculated next
-            cost = zero()
+            _cost, _cost_value = zero(), zero()
             memory.add(curr_state, next_state, pred_state, action_mean, action,
-                action_logprob, _reward, value, _cost, _cost_value, done, info)
+                action_logprob, reward, value, _cost, _cost_value, done, info)
 
             # Calculate constraint and add to memory after (memory used to calculate)
             try:
-                cost = self.agent.calculate_constraint(i, next_state, memory)
-                memory.cost[-1] = cost
+                with torch.no_grad():
+                    cost = self.agent.calculate_constraint(i, next_state, memory)
+                    cost_value = agent.run_if_has('cost_critic',  state=next_state)
+                memory.costs[-1] = cost_value
+
+                # Save cost differently depending on if reward is penalized
+                _reward, _cost, _cost_value = reward, cost, cost_value
+
+                if agent.params.reward_penalized:
+                    curr_penalty = agent.penalty.use_penalty()
+                    reward_total = reward - curr_penalty * cost
+                    reward_total = reward_total / (1 + curr_penalty)
+                    _reward, _cost, _cost_value  = reward_total, zero(), zero()
+
+                memory.rewards[-1]     = _reward
+                memory.costs[-1]       = _cost
+                memory.cost_values[-1] = _cost_value
+
             except NotImplementedError:
                 pass
 
+            # Save current state data
             for key, value in curr_data.items():
                 add_to_run_data(key, value, done)
 
@@ -124,7 +132,7 @@ class Runner(object):
             actions = torch.stack([action]) if not isinstance(action, list) else action
             info_values = list( info.values() )
             state_data.append([ current_time+i, done, reward, float(cost),
-                *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
+              *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
 
             assert isinstance(curr_state, torch.Tensor)
             return curr_state, run_data, state_data

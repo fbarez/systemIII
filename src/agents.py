@@ -17,7 +17,7 @@ class Agent:
         self.device = torch.device('cuda' if self.params.use_cuda else 'cpu')
 
         # initialize memory and networks
-        self.memory = Memory( self.params.use_cuda ) if memory is None else memory
+        self.memory = Memory( self.params ) if (memory is None) else memory
 
         # shortcut parameters
         self.gae_lambda   = self.params.gae_lambda
@@ -33,7 +33,7 @@ class Agent:
 
         self.models = []
 
-    def run_agent_if_has(self, attr:str, **kwargs):
+    def run_if_has(self, attr:str, **kwargs):
         if not hasattr(self, attr):
             return torch.tensor(0)
         agent_method = getattr(self, attr)
@@ -157,8 +157,7 @@ class ActorCriticAgent( Agent ):
 
 def learn(agent: Agent):
     # prepare advantages and other tensors used for training
-    agent.memory.calculate_advantages()
-    memory = agent.memory.prepare()
+    memory = agent.memory.prepare(calculate_advantages=True)
     kl_target_reached = False
 
     # begin training loops
@@ -266,7 +265,7 @@ def learn(agent: Agent):
             # 2.6 Add optional entropy loss term
             entropy_regularization = agent.params.entropy_regularization
             if entropy_regularization != 0:
-                entropy_loss += entropy_regularization * entropies.mean()
+                entropy_loss = entropy_regularization * entropies.mean()
 
             # 2.7 Calculate total loss for actor and critics
             total_loss = actor_loss + 0.5*critic_loss + entropy_loss
@@ -277,7 +276,11 @@ def learn(agent: Agent):
             total_loss.backward()
             agent.actor.optimizer.step()
             agent.value_critic.optimizer.step()
-            _ = agent.cost_critic.step() if (not agent.reward_penalized) else None
+            agent.cost_critic.optimizer.step() if hasattr(agent, 'cost_critic') else None
+
+        # post run, decay action std
+        if agent.params.actions_continuous:
+            agent.decay_action_std(0.01, 0.1)
 
     agent.memory.clear_memory()
 

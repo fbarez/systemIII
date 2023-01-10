@@ -147,12 +147,12 @@ class PredictorNetwork(nn.Module):
 
     # pylint: disable=not-callable
     def forward(self, state, action, dim=-1):
-        if actions.dtype == torch.int64:
-            actions = torch.nn.functional.one_hot(action,
+        if action.dtype == torch.int64:
+            action = torch.nn.functional.one_hot(action,
                 num_classes=self.action_size).float()
 
         # residual predictor
-        inputs =  torch.cat((state, actions), dim).float()
+        inputs =  torch.cat((state, action), dim).float()
         pred_next_state = self.predictor(inputs) + state
         return pred_next_state
 
@@ -217,15 +217,16 @@ class PenaltyModel:
 
         # initialize penalty parameter
         penalty_param_init = np.log( max( np.exp(self.penalty_init)-1, 1e-8 ) )
-        self.penalty_param = torch.nn.param(penalty_param_init, dtype=torch.float32)
+        self.penalty_param = torch.nn.Parameter(
+            torch.tensor(penalty_param_init, dtype=torch.float32) )
 
         # initialize adam optimizer
-        self.optimizer = torch.optim.Adam(self.penalty_param, lr=self.penalty_lr)
+        self.optimizer = torch.optim.Adam([self.penalty_param], lr=self.penalty_lr)
 
     def calculate_penalty(self):
         """Calculates the penalty based on the penalty parameters"""
         # calculate penalty based on parameter
-        penalty = torch.nn.softplus(self.penalty_param)
+        penalty = torch.nn.Softplus(self.penalty_param)
         return penalty
 
     def use_penalty(self):

@@ -2,6 +2,7 @@
 """
 # pylint: disable=import-error
 import gym
+import safety_gym
 
 config = {
     'robot_base': 'xmls/car.xml',

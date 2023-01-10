@@ -36,7 +36,7 @@ def train_model( env,
         render: bool = False
         ):
     runner = Runner( env, agent )
-    curr_state = torch.flatten( env.reset() )
+    curr_state, _state_map = map_and_flatten_state( env.reset() )
 
     episode, timesteps = 0, 0
     train_run_data = defaultdict(default_scores_dict)
@@ -99,9 +99,6 @@ def train_model( env,
         # Step 3. Learn
         losses = agent.learn()
         losses = { k:round(float(v),2) for k,v in losses.items()}
-
-        if agent.params.actions_continuous:
-            agent.decay_action_std(0.01, 0.1)
 
         # Step 4. Print some info about the training so far
         initial_episode = episode
@@ -255,9 +252,8 @@ def main( game_mode: str,
         timestep_length=timestep_length,
         save_period=save_period,
         cumulative_limit=5,
-        cost_lambda=0.0
     )
-    print(params)
+    print("# Parameters:\n", params)
 
     os.makedirs(params.checkpoint_dir, exist_ok=True)
 
