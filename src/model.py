@@ -1,23 +1,23 @@
-from typing_extensions import Self
-import torch.nn.functional as F
-import torch.nn as nn
-import torch
-import torch.optim as optim
-import numpy as np
-import math
-from torch.nn import init
-from memory import Memory
-from params import Params
-from torch import Tensor
+""" Define the Neural Networks and Models used by the Agent Models
+"""
 import os
-
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch import Tensor
 from torch.distributions import MultivariateNormal, Categorical
+
+from params import Params
+
 # for some reason, the following do not work be default
+# pylint: disable=function-redefined, abstract-method, missing-class-docstring
 class Categorical(Categorical):
     @property
     def mode(self):
         return self.probs.argmax(dim=-1)
 
+# pylint: disable=function-redefined, abstract-method, missing-class-docstring
 class MultivariateNormal(MultivariateNormal):
     @property
     def mode(self):
@@ -38,7 +38,7 @@ class ActorNetwork(nn.Module):
         self.action_size = p.action_size
         self.set_action_std(p.action_std)
 
-        if self.actions_continuous: 
+        if self.actions_continuous:
             self.actor = nn.Sequential(
                 nn.Linear(p.state_size, p.hidden_size1),
                 nn.ReLU(),
@@ -65,12 +65,13 @@ class ActorNetwork(nn.Module):
         cov_mat = torch.diag_embed(action_var).to(self.device)
         return cov_mat
 
+    # pylint: disable=not-callable
     def forward(self, state):
         if self.actions_continuous:
             action_mean = self.actor(state)
             cov_mat = self.cov_mat(action_mean)
             distribution = MultivariateNormal(action_mean, cov_mat)
-        
+
         else:
             action_probs = self.actor(state)
             distribution = Categorical(action_probs)
@@ -88,7 +89,7 @@ class ActorNetwork(nn.Module):
             action = distribution.sample()
         else:
             action = distribution.mode
-        
+
         action_logprob = distribution.log_prob(action)
         action_mean = distribution.mode
 
@@ -104,7 +105,8 @@ class ActorNetwork(nn.Module):
 
     def set_action_std(self, new_action_std):
         self.action_std = new_action_std
-        self.action_var = torch.full((self.action_size,), new_action_std * new_action_std).to(self.device)
+        self.action_var = \
+            torch.full((self.action_size,), new_action_std**2 ).to(self.device)
 
     def update_checkpoint(self, params:Params):
         self.checkpoint_file = os.path.join(
@@ -114,7 +116,8 @@ class ActorNetwork(nn.Module):
     def calculate_kl_divergence(self, states, old_means):
         with torch.no_grad():
             new_means = self.forward(states).loc
-        kl = 0.5 * ( (new_means - old_means)**2 ).sum(axis=-1).mean() / (self.action_std**2 )
+        kl  = 0.5 * ( (new_means - old_means)**2 ).sum(axis=-1).mean()
+        kl /= (self.action_std**2)
         return kl
 
     def save_checkpoint(self):
@@ -137,20 +140,21 @@ class PredictorNetwork(nn.Module):
                 nn.LeakyReLU(),
                 nn.Linear(p.hidden_size2, p.state_size),
         ).float().to(self.device)
-        
+
         self.action_size = p.action_size
         self.optimizer = optim.Adam(self.parameters(), lr=p.learning_rate)
         self.to(self.device)
 
-    def forward(self, prev_states, actions, dim=-1):
+    # pylint: disable=not-callable
+    def forward(self, state, action, dim=-1):
         if actions.dtype == torch.int64:
-            actions = torch.nn.functional.one_hot(actions,
+            actions = torch.nn.functional.one_hot(action,
                 num_classes=self.action_size).float()
 
         # residual predictor
-        inputs =  torch.cat((prev_states, actions), dim).float()
-        pred_next_states = self.predictor(inputs) + prev_states
-        return pred_next_states
+        inputs =  torch.cat((state, actions), dim).float()
+        pred_next_state = self.predictor(inputs) + state
+        return pred_next_state
 
     def update_checkpoint(self, params:Params):
         self.checkpoint_file = os.path.join(
@@ -183,6 +187,7 @@ class CriticNetwork(nn.Module):
         self.to(self.device)
 
     def forward(self, state):
+        # pylint: disable=not-callable
         value = self.critic(state)
         return value
 
@@ -191,7 +196,7 @@ class CriticNetwork(nn.Module):
             params.checkpoint_dir,
             params.agent_type + f"_{self.name}_" + params.instance_name
         )
-    
+
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)
 
@@ -215,7 +220,7 @@ class PenaltyModel:
         self.penalty_param = torch.nn.param(penalty_param_init, dtype=torch.float32)
 
         # initialize adam optimizer
-        self.optimizer = torch.optim.Adam(self.penalty_param, lr=self.penalty_lr) 
+        self.optimizer = torch.optim.Adam(self.penalty_param, lr=self.penalty_lr)
 
     def calculate_penalty(self):
         """Calculates the penalty based on the penalty parameters"""
@@ -233,13 +238,13 @@ class PenaltyModel:
         if self.learn_penalty:
             if self.penalty_param_loss:
                 penalty_loss = - self.penalty_param * (episode_costs-self.cost_limit)
-            
+
             else:
                 penalty = self.calculate_penalty()
                 penalty_loss = - penalty * (episode_costs - self.cost_limit)
 
             self.optimizer.zero_grad()
             penalty_loss.backward()
-            self.optimizer.step() 
-        
+            self.optimizer.step()
+
         return self

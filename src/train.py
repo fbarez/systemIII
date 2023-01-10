@@ -1,23 +1,33 @@
+""" Initialize training for safety-gym or cartpole
+"""
+
+from typing import Optional
+from collections import defaultdict
+import argparse
+import time
+import csv
+import os
+
+# pylint: disable=import-error
+import gym
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+from memory import Memory, map_and_flatten_state
+from runner import Runner
+
+from plot_scores import plot_scores
+
 from agents import S3Agent, ActorCriticAgent, Agent
 from world import CreateWorld
 from params import Params
+
+# pylint: disable=wildcard-import, unused-wildcard-import
 from constraints import *
 
-from typing import Optional
-
-import numpy as np
-import torch
-import time
-from runner import Runner
-from memory import Memory
-import gym
-import csv
-import argparse
-import os
-from collections import defaultdict
-
-import matplotlib.pyplot as plt
-from plot_scores import plot_scores
+def default_scores_dict():
+    return {"t": [], "episode":[], "val": [], "mean": [], "std": []}
 
 def train_model( env,
         agent: Agent,
@@ -26,30 +36,36 @@ def train_model( env,
         render: bool = False
         ):
     runner = Runner( env, agent )
-    curr_state = Memory().flatten_state( env.reset() )
+    curr_state = torch.flatten( env.reset() )
 
     episode, timesteps = 0, 0
-    default_scores_dict = lambda : {"t": [], "episode":[], "val": [], "mean": [], "std": []}
     train_run_data = defaultdict(default_scores_dict)
     test_run_data  = defaultdict(default_scores_dict)
     train_states = []
     test_states  = []
     run_data = None
-    t0 = time.time()
 
     # generate titles for states and constraints csv
     env.reset()
     action = env.action_space.sample()
-    [ state, reward, done, info ] = env.step(np.array( action ))
+    [ state, _reward, _done, info ] = env.step(np.array( action ))
 
-    curr_state, state_mapping = Memory().flatten_state( state, return_mapping=True )
+    # TODO: Add real logging library
+    # Map names of state variables to corresponding part of array, and vice versa
+    curr_state, state_mapping = map_and_flatten_state( state )
     reverse_mapping = ["" for _ in range(params.state_size)]
     for key, [start,end] in state_mapping.items():
         for i in range(start, end):
             reverse_mapping[i] = key+"_"+str(i-start)
+
+    # Define mapping on info dict, action indices, and other titles to save
     info_mapping    = list( info.keys() )
-    action_mapping  = ["action" if not params.actions_continuous else "action_"+str(i) for i in range(params.action_size)]
-    titles = ["time", "done", "reward", "constraint", *action_mapping, *info_mapping, *reverse_mapping ]
+    action_mapping = ["action"]
+    if params.actions_continuous:
+        action_mapping = [ "action_"+str(i) for i in range(params.action_size) ]
+    titles = ["time", "done", "reward", "constraint",
+        *action_mapping, *info_mapping, *reverse_mapping ]
+
     train_states.append( titles )
     test_states.append( titles )
     for state_data, name in [(train_states, "training"), (test_states, "test")]:
@@ -82,7 +98,7 @@ def train_model( env,
 
         # Step 3. Learn
         losses = agent.learn()
-        losses = { k:round(float(v),2) for k,v in losses.items()}        
+        losses = { k:round(float(v),2) for k,v in losses.items()}
 
         if agent.params.actions_continuous:
             agent.decay_action_std(0.01, 0.1)
@@ -101,7 +117,7 @@ def train_model( env,
         for i, score in enumerate(scores[:-1]):
             loss_info = f'\tlosses {losses}' if i==num_dones-1 else ''
             print('episode', initial_episode+i, 'score %.2f' % score, loss_info )
-        
+
         # Step 5. Test the model to gain insight into performance
         # TODO: Re-add code for testing the model
 
@@ -118,9 +134,9 @@ def train_model( env,
                 writer = csv.writer(f)
                 for state in state_data:
                     writer.writerow(state)
-        
+
         train_states, test_states  = [], []
-        
+
     print("Finished training")
     return train_run_data, test_run_data
 
@@ -147,6 +163,8 @@ def main( game_mode: str,
         hidden_size   = 256
         reward_decay  = 0.99
         gae_lambda    = 0.97
+        cost_decay    = 0.99
+        cost_lambda   = 0.97
         learning_rate = 0.001
         kl_target     = 0.012
 
@@ -166,21 +184,28 @@ def main( game_mode: str,
         test_iter     = 1000
         timestep_length = 1
         hidden_size   = 64
+        reward_decay  = 0.99
+        gae_lambda    = 0.95
+        reward_decay  = 0.99
         gae_lambda    = 0.95
         learning_rate = 0.0003
         kl_target     = 0
 
-        calculate_constraint = calculate_constraint_cartpole 
+        calculate_constraint = calculate_constraint_cartpole
 
     else:
         raise ValueError("game_mode must be 'car' or 'cartpole'")
-    
+
+    # pylint: disable=missing-class-docstring
     class S3AgentConstructor(S3Agent):
-        def calculate_constraint( self, index: int, state: torch.Tensor, memory: Optional[Memory] = None ):
+        def calculate_constraint( self, index: int,
+                state: torch.Tensor, memory: Optional[Memory] = None ):
             return calculate_constraint( self, index, state, memory )
 
+    # pylint: disable=missing-class-docstring
     class ActorCriticAgentConstructor(ActorCriticAgent):
-        def calculate_constraint(self, index: int, state: torch.Tensor, memory: Optional[Memory] = None ):
+        def calculate_constraint(self, index: int,
+                state: torch.Tensor, memory: Optional[Memory] = None ):
             return calculate_constraint( self, index, state, memory )
 
     # Choose the Agent
@@ -192,12 +217,13 @@ def main( game_mode: str,
         raise ValueError("Invalid agent type")
 
     # initialise the world state
-    curr_state, state_mapping = Memory().flatten_state( env.reset(), return_mapping=True )
+    curr_state, state_mapping = map_and_flatten_state( env.reset() )
     print( state_mapping, "\n" )
 
     # get parameters needed to construct the agent
     state_size  = curr_state.size()[0]
-    action_size = env.action_space.n if not actions_continuous else env.action_space.shape[0]
+    action_size = \
+        env.action_space.n if not actions_continuous else env.action_space.shape[0]
 
     params = Params(
         state_size=state_size,
@@ -207,12 +233,14 @@ def main( game_mode: str,
         actions_continuous=actions_continuous,
         use_cuda=torch.cuda.is_available(),
         learning_rate=learning_rate,
-        reward_decay=0.99,
+        reward_decay=reward_decay,
         gae_lambda=gae_lambda,
         clipped_advantage=True,
         policy_clip=0.2,
         action_std_init=0.4,
         kl_target=kl_target,
+        cost_decay=cost_decay,
+        cost_lambda=cost_lambda,
         train_cost_critic=True,
         checkpoint_dir=f"tmp/models/{game_mode}/{agent_type}/{model_name}",
         agent_type=agent_type,
@@ -235,13 +263,13 @@ def main( game_mode: str,
 
     train_data_log = []
     test_data_log  = []
-    for i in range(num_agents_to_train):
+    for _ in range(num_agents_to_train):
         # run the training
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
         agent = agent_constructor(params)
-        train_data, test_data = train_model( env, agent, params, run_name, render ) 
+        train_data, test_data = train_model( env, agent, params, run_name, render )
 
         train_data_log.append( train_data )
         test_data_log.append( test_data )
@@ -258,7 +286,7 @@ def main( game_mode: str,
                         writer.writerow([label] + data)
 
                 # plot the scores
-                fig = plot_scores( data_dict, window_size=10, label=metric )
+                _fig = plot_scores( data_dict, window_size=10, label=metric )
                 folder_name = f"figs/{model_name}"
                 os.makedirs(folder_name, exist_ok=True)
                 file_name = f"{folder_name}/{name}-{metric}-{run_name}.png"

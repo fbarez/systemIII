@@ -1,14 +1,15 @@
-# #Author Fazl Barez
-from re import I
-import warnings
-warnings.filterwarnings('ignore')
-
-import numpy as np
-import torch
-from memory import Memory
-from typing import Optional, Callable
+""" Define a function which rolls out steps in the environment,
+and saves the relevant environment variables
+"""
 from collections import defaultdict
-from typing import Optional, List, Dict
+from typing import Optional, Dict, Callable
+import warnings
+
+import torch
+import numpy as np
+from memory import Memory
+
+warnings.filterwarnings('ignore')
 print("ignore...\n")
 
 
@@ -17,13 +18,15 @@ def zero():
 
 # , 'Position Agent', next_observation['observe_qpos']
 class Runner(object):
+    """ Rolls out steps in the environment.
+    """
     def __init__(self, env, agent=None):
         self.env = env
         self.agent = agent
         self.memory = Memory() if agent is None else self.agent.memory
         return
 
-    def random_action_sampler( self, state ):
+    def random_action_sampler( self, _state ):
         action = self.env.action_space.sample()
         return action, 0, zero()
 
@@ -44,12 +47,6 @@ class Runner(object):
         self.memory = self.memory if self.agent is None else self.agent.memory
         memory = self.memory
         agent = self.agent
-        agent_has = lambda attr : hasattr(agent, attr)
-        agent_run = lambda attr, **kwargs : getattr(agent, attr)(**kwargs)
-        def run_agent_if_has(attr:str, **kwargs):
-            if not agent_has(attr):
-                return zero()
-            return agent_run(attr, **kwargs)
 
         if prev_run_data is None:
             run_data = defaultdict(list)
@@ -64,7 +61,7 @@ class Runner(object):
             run_data[key][-1] += value
             if done:
                 run_data[key].append(0)
-        
+
         # if no agent provided, use a random action sampler
         if action_sampler is None:
             action_sampler = self.random_action_sampler
@@ -73,58 +70,63 @@ class Runner(object):
         if curr_state is None:
             curr_state = memory.flatten_state( self.env.reset() )
 
-        state_data = []        
-        with torch.no_grad():
-            for i in range(num_iter):
-                # Get the next state
-                action, action_logprob, action_mean = action_sampler( curr_state, training )
-                [ next_state, reward, done, info ] = self.env.step(np.array( action.cpu() ))
-                curr_data = {"score": reward, **info}
+        state_data = []
+        for i in range(num_iter):
+            # Get the next state
 
-                # Save additional state data for later training
-                next_state = memory.flatten_state(next_state)
-                pred_state = run_agent_if_has('predictor', curr_state, action)
-                value      = run_agent_if_has('value_critic', next_state)
-                cost_value = run_agent_if_has('cost_critic',  next_state)
+            with torch.no_grad():
+                action, action_logprob, action_mean = action_sampler(curr_state, training)
 
-                # Save cost differently depending on if reward is penalized
-                _reward, _cost, _cost_value = reward, cost, cost_value
-                if agent.reward_penalized:
-                    curr_penalty = agent.penalty.get_penalty()
-                    reward_total = reward - curr_penalty * cost
-                    reward_total = reward_total / (1 + curr_penalty)
-                    _reward, _cost, _cost_value  = reward_total, 0, 0
+            [ next_state, reward, done, info ] = self.env.step(np.array(action.cpu()))
+            curr_data = {"score": reward, **info}
 
-                # Store the transition. Let cost be zero for now, as it is calculated next
-                cost = zero()
-                memory.add(curr_state, next_state, pred_state, action_mean, action,
-                    action_logprob, _reward, value, _cost, _cost_value, done, info)
+            # Save additional state data for later training
+            next_state = memory.flatten_state(next_state)
+            # pylint
 
-                # Calculate constraint and add to memory after (memory used to calculate)
-                try:
-                    cost = self.agent.calculate_constraint(i, next_state, memory)
-                    memory.cost[-1] = cost
-                except NotImplementedError:
-                    pass
+            with torch.no_grad():
+                pred_state = agent.run_if_has('predictor',state=curr_state, action=action)
+                value      = agent.run_if_has('value_critic', state=next_state)
+                cost_value = agent.run_if_has('cost_critic',  state=next_state)
 
-                for key, value in curr_data.items():
-                    add_to_run_data(key, value, done)
+            # Save cost differently depending on if reward is penalized
+            _reward, _cost, _cost_value = reward, cost, cost_value
+            if agent.reward_penalized:
+                curr_penalty = agent.penalty.use_penalty()
+                reward_total = reward - curr_penalty * cost
+                reward_total = reward_total / (1 + curr_penalty)
+                _reward, _cost, _cost_value  = reward_total, 0, 0
 
-                if render:
-                    self.env.render()
+            # Store the transition. Let cost be zero for now, as it is calculated next
+            cost = zero()
+            memory.add(curr_state, next_state, pred_state, action_mean, action,
+                action_logprob, _reward, value, _cost, _cost_value, done, info)
 
-                # get things ready for next loop
-                if done:
-                    curr_state = memory.flatten_state( self.env.reset() )
-                else:
-                    curr_state = next_state
+            # Calculate constraint and add to memory after (memory used to calculate)
+            try:
+                cost = self.agent.calculate_constraint(i, next_state, memory)
+                memory.cost[-1] = cost
+            except NotImplementedError:
+                pass
 
-                actions = torch.stack([action]) if not type(action) is list else action
-                info_values = list( info.values() )
-                state_data.append([ current_time+i, done, reward, float(cost), 
-                    *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
+            for key, value in curr_data.items():
+                add_to_run_data(key, value, done)
 
-            assert type(curr_state) is torch.Tensor
+            if render:
+                self.env.render()
+
+            # get things ready for next loop
+            if done:
+                curr_state = memory.flatten_state( self.env.reset() )
+            else:
+                curr_state = next_state
+
+            actions = torch.stack([action]) if not isinstance(action, list) else action
+            info_values = list( info.values() )
+            state_data.append([ current_time+i, done, reward, float(cost),
+                *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
+
+            assert isinstance(curr_state, torch.Tensor)
             return curr_state, run_data, state_data
 
     def extract_distances(self, observations):
@@ -145,7 +147,7 @@ class Runner(object):
         - close objects occlude far objects
         - constant size observation with variable numbers of objects
         '''
- 
+
         #env.reset()
         distances = []
         agent_positions = []
@@ -153,14 +155,14 @@ class Runner(object):
         probs = []
         actions = []
 
-        for state in observations: 
+        for state in observations:
             distances.append((1-state['hazards_lidar'])*self.env.config['lidar_max_dist'])
 
             probs.append(state['hazards_lidar'])
-            
+
             #get agent's current position
             agent_positions.append(self.env.world.robot_pos())
-            
+
             #get position of the hazards
             for h_pos in self.env.hazards_pos:
                 hazard_positions.append(h_pos)
@@ -172,4 +174,5 @@ class Runner(object):
         agent_positions  = np.array(agent_positions)
         actions = np.array(actions)
 
-        return distances, weight_literal, probs, agent_positions, hazard_positions, actions
+        return distances, weight_literal, probs, \
+            agent_positions, hazard_positions, actions

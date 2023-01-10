@@ -1,3 +1,7 @@
+""" Defines the Memory class, which saves data at every timestep for the
+given run, and processes the returned values into advantage arrays.
+"""
+# pylint: disable=attribute-defined-outside-init
 import numpy as np
 import torch
 import scipy
@@ -6,13 +10,13 @@ from params import Params
 def discount_cumsum(x, discount):
     """
     magic from rllab for computing discounted cumulative sums of vectors.
-    input: 
-        vector x, 
-        [x0, 
-         x1, 
+    input:
+        vector x,
+        [x0,
+         x1,
          x2]
     output:
-        [x0 + discount * x1 + discount^2 * x2,  
+        [x0 + discount * x1 + discount^2 * x2,
          x1 + discount * x2,
          x2]
     """
@@ -20,7 +24,12 @@ def discount_cumsum(x, discount):
 
 
 class Memory:
-    def __init__(self, params:Params, use_cuda=None, state_mapping=None):
+    """ Memory class which saves data at every timestep for the given run.
+    Also processes the returned values into advantages.
+    """
+    def __init__(self, params:Params=None, use_cuda=None, state_mapping=None):
+        if params is None:
+            params = Params(0,0)
         self.state_mapping = state_mapping
         use_cuda = torch.cuda.is_available() if use_cuda is None else use_cuda
         self.device = torch.device("cuda" if use_cuda else "cpu")
@@ -108,7 +117,7 @@ class Memory:
         cost_adv_mean = np.mean(self.cost_advantages)
         self.cost_advantages -= cost_adv_mean
 
-        
+
         return self
 
     def prepare(self, calculate_advantages=False):
@@ -127,14 +136,14 @@ class Memory:
         self.costs = torch.stack(self.costs).to(self.device)
         self.cost_values = torch.stack(self.cost_values).to(self.device)
         self.dones = np.array(self.dones)
-        self.infos
+        self.infos = self.infos
 
         if self.advantages_calculated:
             self.advantages = torch.tensor(self.advantages)
             self.returns = torch.tensor(self.returns)
             self.cost_advantages = torch.tensor(self.cost_advantages)
             self.cost_values = torch.tensor(self.cost_values)
-        
+
         # arrays that record data for each episode
         self.done_indices = np.array(self.done_indices)
         self.episode_costs = np.array(self.episode_costs[:-1])
@@ -168,7 +177,7 @@ class Memory:
             self.done_indices.append(len(self.dones)-1)
             self.episode_costs.append(0)
             self.episode_rewards.append(0)
-        
+
         # List[dict]
         self.infos.append(info)
 
@@ -189,7 +198,7 @@ class Memory:
         self.infos = []
 
         # episode arrays
-        self.done_indices = [] 
+        self.done_indices = []
         self.episode_costs = [0]
         self.episode_rewards = [0]
 
@@ -201,7 +210,7 @@ class Memory:
         self.cost_returns = []
 
         return self
-    
+
     def flat_get(self, current_state_flat:torch.Tensor, key:str):
         if not self.state_mapping:
             raise Exception("mapping not defined")
@@ -209,29 +218,18 @@ class Memory:
         return current_state_flat[self.state_mapping[key][0]:self.state_mapping[key][1]]
 
     def map_and_flatten(self, state:torch.Tensor):
-        state_mapping = {}
-        state_flat = []
-        if type(state) is np.ndarray:
-            return torch.tensor(state).float().to(self.device), state_mapping
-
-        for key, item in state.items():
-            starting_index = len(state_flat)
-            state_flat.extend( item.flatten() )
-            ending_index = len(state_flat)
-            state_mapping[key] = [starting_index, ending_index]
+        state_flat, state_mapping = map_and_flatten_state(state)
         self.state_mapping = state_mapping
-        state_flat = torch.tensor(state_flat).float().to(self.device)
-
         return state_flat, state_mapping
 
     def flatten_state(self, state:torch.Tensor, return_mapping:bool=False ):
         if return_mapping:
             return self.map_and_flatten(state)
-        
+
         if self.state_mapping is None:
             return self.map_and_flatten(state)[0]
 
-        if type(state) is np.ndarray:
+        if isinstance(state, np.ndarray):
             return torch.tensor(state).float().to(self.device)
 
         state_flat = []
@@ -240,3 +238,19 @@ class Memory:
         state_flat = torch.tensor(state_flat).float().to(self.device)
 
         return state_flat
+
+def map_and_flatten_state(state:torch.Tensor):
+    state_mapping = {}
+    state_flat = []
+    if isinstance(state, np.ndarray):
+        return torch.tensor(state).float(), state_mapping
+
+    for key, item in state.items():
+        starting_index = len(state_flat)
+        state_flat.extend( item.flatten() )
+        ending_index = len(state_flat)
+        state_mapping[key] = [starting_index, ending_index]
+
+    state_flat = torch.tensor(state_flat).float()
+
+    return state_flat, state_mapping

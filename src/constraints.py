@@ -39,7 +39,7 @@ def calculate_constraint_cargoal2_v0( self: Agent,
 
 def calculate_constraint_cargoal2_v1( self: Agent,
         index: int,
-        state: Tensor, 
+        state: Tensor,
         memory: Optional[Memory] = None,
         ):
     max_lidar_range = 5
@@ -50,7 +50,7 @@ def calculate_constraint_cargoal2_v1( self: Agent,
     closest_hazard = ( 1 - torch.max(hazards_lidar) )*max_lidar_range
     hazards_constraint = ( 1 - torch.clamp( closest_hazard, min=0, max=hazardous_distance )*(1/hazardous_distance) )**2
 
-    constraint = hazards_constraint 
+    constraint = hazards_constraint
 
     return 1 - constraint
 

@@ -1,20 +1,21 @@
-import numpy as np
-
+""" Defines the models and learning methods.
+"""
 import time
-import torch
 from typing import Optional
+import numpy as np
+import torch
 
-
+from params import Params
 from memory import Memory
 from model import ActorNetwork, PredictorNetwork, CriticNetwork, PenaltyModel
-from params import Params
 
 class Agent:
+    """ Define generic Agent model for RL learning """
     def __init__(self, params:Params, memory:Optional[Memory]=None):
         # initialize hyperparameters / config
-        self.params = params    
+        self.params = params
         self.device = torch.device('cuda' if self.params.use_cuda else 'cpu')
-        
+
         # initialize memory and networks
         self.memory = Memory( self.params.use_cuda ) if memory is None else memory
 
@@ -32,6 +33,12 @@ class Agent:
 
         self.models = []
 
+    def run_agent_if_has(self, attr:str, **kwargs):
+        if not hasattr(self, attr):
+            return torch.tensor(0)
+        agent_method = getattr(self, attr)
+        return agent_method(**kwargs)
+
     def set_action_std(self, new_action_std):
         if not hasattr(self, 'actor'):
             raise Exception("Agent has no attribute 'actor'")
@@ -47,17 +54,18 @@ class Agent:
             print("setting actor output action_std to : ", self.action_std)
         self.set_action_std(self.action_std)
 
-    def choose_action( self, state, training=True ): 
+    def choose_action( self, state, training=True ):
         if not hasattr(self, 'actor'):
             raise Exception("Agent has no attribute 'actor'")
-        action, action_logprob, action_mean = self.actor.get_action(state, training=training)
+        action, action_logprob, action_mean = \
+            self.actor.get_action(state, training=training)
         return action, action_logprob, action_mean
- 
+
     def generate_batches(self):
-        n_states = len(self.memory.curr_states) 
-        batch_start = np.arange(0, n_states, self.batch_size) 
-        indices = np.arange(n_states, dtype=np.int64) 
-        np.random.shuffle(indices) 
+        n_states = len(self.memory.curr_states)
+        batch_start = np.arange(0, n_states, self.batch_size)
+        indices = np.arange(n_states, dtype=np.int64)
+        np.random.shuffle(indices)
         batches = [indices[i:i+self.batch_size] for i in batch_start]
 
         return batches
@@ -71,11 +79,11 @@ class Agent:
         memory = self.memory if memory is None else memory
         curr_states  = memory.curr_states
         action_means = memory.action_means
-        
+
         kl = self.actor.calculate_kl_divergence( curr_states, action_means )
         if kl > self.params.kl_target:
             return True, kl
-        
+
         return False, kl
 
     def save_models(self):
@@ -94,6 +102,7 @@ class Agent:
         raise NotImplementedError
 
 class S3Agent(Agent):
+    """ Define the special System 3 Agent class. """
     def __init__(self, params:Params, memory:Optional[Memory]=None):
         super(S3Agent, self).__init__(params, memory)
 
@@ -104,11 +113,11 @@ class S3Agent(Agent):
 
         self.models = [ self.actor, self.predictor, self.value_critic ]
 
-        if params.train_cost_critic: 
+        if params.train_cost_critic:
             self.cost_critic = CriticNetwork( params, "cost_critic" )
             self.models.append( self.cost_critic )
-        
-        self.penalty = PenaltyModel( params ) 
+
+        self.penalty = PenaltyModel( params )
 
         self.params.clipped_advantage = True
 
@@ -125,7 +134,7 @@ class S3Agent(Agent):
         return learn(self)
 
 class ActorCriticAgent( Agent ):
-       
+    """Defines the standard Actor Critic PPO agent"""
     def __init__(self, params:Params, memory:Optional[Memory]=None):
         super(ActorCriticAgent, self).__init__(params, memory)
 
@@ -139,13 +148,13 @@ class ActorCriticAgent( Agent ):
             self.cost_critic = CriticNetwork( params, "cost_critic" )
             self.models.append( self.cost_critic )
 
-        self.penalty = PenaltyModel( params ) 
+        self.penalty = PenaltyModel( params )
 
         self.params.clipped_advantage = True
 
     def learn(self):
         return learn(self)
- 
+
 def learn(agent: Agent):
     # prepare advantages and other tensors used for training
     agent.memory.calculate_advantages()
@@ -157,7 +166,7 @@ def learn(agent: Agent):
 
         # Fine-tune the penalty parameter
         agent.penalty.learn( memory.episode_costs )
-        curr_penalty = agent.penalty.get_penalty()
+        curr_penalty = agent.penalty.use_penalty()
 
         # Create the batches for training agent networks
         batches = agent.generate_batches()
@@ -199,12 +208,12 @@ def learn(agent: Agent):
             # 2.1 Run all the models to build gradients:
             # a) Actor
             new_logprobs, entropies = agent.actor.calculate_entropy(curr_states, actions)
-            
+
             # b) Run predictor, or just use current states
             states = curr_states
             if has_predictor:
                 states = agent.predictor(curr_states, actions)
-            
+
             # c) Run value critic
             value_critic_value = agent.value_critic(states).squeeze()
 
@@ -215,7 +224,7 @@ def learn(agent: Agent):
             # 2.2 Calculate KL divergence of Actor policy.
             if not kl_target_reached:
                 do_early_stop, kl = agent.check_kl_early_stop()
-                if do_early_stop:   
+                if do_early_stop:
                     print(f"Early stopping at epoch {epoch} with KL divergence {kl}")
                 kl_target_reached = True
 
@@ -233,7 +242,7 @@ def learn(agent: Agent):
                         torch.clamp(prob_ratio, 1-clip, 1+clip) * advantages
                     surrogate_advantages = \
                         torch.min(surrogate_advantages, scaled_clipped_advantages)
-                
+
                 actor_objective = surrogate_advantages.mean()
 
                 # Sometimes use cost advantages. See safety-starter-agents
@@ -268,9 +277,9 @@ def learn(agent: Agent):
             total_loss.backward()
             agent.actor.optimizer.step()
             agent.value_critic.optimizer.step()
-            agent.cost_critic.step() if (not agent.reward_penalized) else None
- 
-    agent.memory.clear_memory() 
+            _ = agent.cost_critic.step() if (not agent.reward_penalized) else None
+
+    agent.memory.clear_memory()
 
     losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }
     return losses

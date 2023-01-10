@@ -1,15 +1,14 @@
-from tkinter import W
-from tkinter.tix import DirTree
-from typing import Optional, Union
-
-import numpy as np
+"""Define Params class to hold all hyperparameters for the run, and provide defaults
+"""
+from typing import Union
 import json
 
 class Params:
+    """Params class to hold all hyperparameters for the run, and provide defaults"""
     def __init__(self,
-            state_size:int, 
-            action_size:int, 
-            hidden_size1:int = 256, 
+            state_size:int,
+            action_size:int,
+            hidden_size1:int = 256,
             hidden_size2:int = 256,
             actions_continuous:bool = True,
             use_cuda:bool = True,
@@ -54,7 +53,7 @@ class Params:
             dist_lower_bound:float = 0.3,
             dist_upper_bound:float = 0.6,
         ):
-        
+
         # initialize hyperparameters / config
         self.state_size   = state_size
         self.action_size  = action_size
@@ -75,9 +74,9 @@ class Params:
         self.kl_target = kl_target
         self.cumulative_limit = cumulative_limit # TODO: reimplement
         self.normalization_epsilon = normalization_epsilon
-        
+
         # cost advantage parameters
-        self.reward_penalized = reward_penalized 
+        self.reward_penalized = reward_penalized
         self.cost_decay = cost_decay
         self.cost_lambda = cost_lambda
 
@@ -86,8 +85,8 @@ class Params:
         self.train_cost_critic = train_cost_critic
 
         # Learn penalty (in conjuction with cost critic)
-        self.learn_penalty = learn_penalty 
-        self.cost_limit = cost_limit 
+        self.learn_penalty = learn_penalty
+        self.cost_limit = cost_limit
         self.penalty_init = penalty_init
         self.penalty_lr = penalty_lr
         self.penalty_param_loss = penalty_param_loss
@@ -124,7 +123,7 @@ class Params:
                 continue
             data[key] = getattr( self, key )
         return data
-    
+
     def _update( self, data ):
         for key, value in data.items():
             if key[0] == '_':
@@ -135,10 +134,12 @@ class Params:
     def __str__( self ):
         return self._json().__str__()
 
+    # pylint: disable=unspecified-encoding
     def _dump( self, filename ):
         with open( filename, 'w' ) as f:
             json.dump( self._json(), f )
 
+    # pylint: disable=unspecified-encoding
     def _load( self, filename ):
         with open( filename, 'r' ) as f:
             data = json.load( f )

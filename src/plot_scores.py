@@ -43,13 +43,13 @@ def plot_scores(data,
             window=window_size, min_periods=min_periods).mean()
         y_std  = p.Series(y_std ).rolling(
             window=window_size, min_periods=min_periods).mean()
-    
+
     elif len(data["val"]) != 0:
         # generate the rolling average of x:
         y = data["val"]
         y_rolling = p.Series(y).rolling(window=window_size, min_periods=min_periods)
         y_mean = y_rolling.mean()
-        
+
         # generate the standard deviation of the rolling average windows:
         y_std = y_rolling.std()
 
@@ -58,10 +58,10 @@ def plot_scores(data,
         data["std"]  = np.array(y_std)
 
         rolling = True
-    
+
     else:
         raise ValueError("Data must have either a 'mean' or 'val' column")
-    
+
     if len(data["t"]):
         x, x_label = np.array(data["t"]), "Timesteps"
 
@@ -95,7 +95,7 @@ def plot_scores(data,
     else:
         ax.set_ylabel(label)
     plt.xlim(xmin=XMIN, xmax=XMAX)
-    
+
     if y:
         ax.plot(x, y, label='raw data', color='purple', alpha=0.1)
 
@@ -137,7 +137,7 @@ if __name__ == '__main__':
                 agent_type = 's3'
             elif 'ac' in filename:
                 agent_type = 'ac'
-            
+
             reader = csv.reader(f)
             # each row has the name of the data in the first column
             # and the data in the next columns
@@ -197,7 +197,7 @@ if __name__ == '__main__':
                 test_scores_dict["mean"] = means
                 test_scores_dict["std"]  = stds
                 window_size = 1
-        
+
         if len(data_list) == 1:
             test_scores_dict["std"] = data_list[0]["std"]
 

@@ -1,8 +1,7 @@
-import safety_gym
+""" Define the default parameters for the Safety Gym environment
+"""
+# pylint: disable=import-error
 import gym
-from safety_gym.envs.engine import Engine
-import numpy as np
-import torch
 
 config = {
     'robot_base': 'xmls/car.xml',
@@ -25,9 +24,9 @@ def CreateWorld():
 
     # ensure state is returned as a dict
     state = env.reset()
-    if not type(state) is dict:
+    if not isinstance(state, dict):
         env.toggle_observation_space()
         state = env.reset()
-    assert type(state) is dict
+    assert isinstance(state, dict)
 
     return env
