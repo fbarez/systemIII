@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import scipy
+from params import Params
 
 def discount_cumsum(x, discount):
     """
@@ -19,7 +20,7 @@ def discount_cumsum(x, discount):
 
 
 class Memory:
-    def __init__(self, params, use_cuda=None, state_mapping=None):
+    def __init__(self, params:Params, use_cuda=None, state_mapping=None):
         self.state_mapping = state_mapping
         use_cuda = torch.cuda.is_available() if use_cuda is None else use_cuda
         self.device = torch.device("cuda" if use_cuda else "cpu")
@@ -87,16 +88,16 @@ class Memory:
         # Calculate for Values
         rewards = np.append(np.array(self.rewards), last_value)
         values = np.append(np.array(self.values), last_value)
-        deltas = rewards[:-1] + self.reward_decay * values[1:] - values[:-1]
+        deltas = rewards[:-1] + reward_decay * values[1:] - values[:-1]
         self.advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
-        self.returns = discount_cumsum(rewards, self.gamma)[:-1]
+        self.returns = discount_cumsum(rewards, reward_decay)[:-1]
 
         # Calculate for costs/constraints
         costs = np.append(np.array(self.costs), last_cost_value)
         cost_values = np.append(np.array(self.cost_values), last_cost_value)
-        cost_deltas = costs[:-1] + self.gamma * cost_values[1:] - cost_values[:-1]
+        cost_deltas = costs[:-1] + cost_decay * cost_values[1:] - cost_values[:-1]
         self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
-        self.cost_returns = discount_cumsum(costs, self.cost_decay)[:-1]
+        self.cost_returns = discount_cumsum(costs, cost_decay)[:-1]
 
         # Use normalization / rescaling of the advantage values
         eps = self.params.normalization_epsilon
@@ -156,7 +157,7 @@ class Memory:
         self.rewards.append(reward)
         self.values.append(value)
         self.costs.append(cost)
-        self.cost_values.append(cost)
+        self.cost_values.append(cost_value)
         self.dones.append(done)
 
         # episode values

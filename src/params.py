@@ -27,6 +27,7 @@ class Params:
             reward_penalized:bool = False,
             cost_decay:float = 0.99,
             cost_lambda:float = 0.95,
+            train_cost_critic:bool = True,
 
             learn_penalty:bool = False,
             cost_limit:int = 25,
@@ -81,7 +82,8 @@ class Params:
         self.cost_lambda = cost_lambda
 
         # Learn value/cost critic
-        # (no hyperparameters here yet)
+        # (no hyperparameters for value critic yet)
+        self.train_cost_critic = train_cost_critic
 
         # Learn penalty (in conjuction with cost critic)
         self.learn_penalty = learn_penalty 

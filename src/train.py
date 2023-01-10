@@ -1,5 +1,3 @@
-from tkinter import W
-from torch.multiprocessing import Pipe
 from agents import S3Agent, ActorCriticAgent, Agent
 from world import CreateWorld
 from params import Params
@@ -207,13 +205,15 @@ def main( game_mode: str,
         hidden_size1=hidden_size,
         hidden_size2=hidden_size,
         actions_continuous=actions_continuous,
+        use_cuda=torch.cuda.is_available(),
         learning_rate=learning_rate,
         reward_decay=0.99,
         gae_lambda=gae_lambda,
+        clipped_advantage=True,
         policy_clip=0.2,
         action_std_init=0.4,
         kl_target=kl_target,
-        use_cuda=torch.cuda.is_available(),
+        train_cost_critic=True,
         checkpoint_dir=f"tmp/models/{game_mode}/{agent_type}/{model_name}",
         agent_type=agent_type,
         game_mode=game_mode,
@@ -227,7 +227,7 @@ def main( game_mode: str,
         timestep_length=timestep_length,
         save_period=save_period,
         cumulative_limit=5,
-        cost_lambda=0.15
+        cost_lambda=0.0
     )
     print(params)
 

@@ -1,8 +1,6 @@
-from typing_extensions import Self
 import numpy as np
 
 import time
-from regex import W
 import torch
 from typing import Optional
 
@@ -25,6 +23,12 @@ class Agent:
         self.reward_decay = self.params.reward_decay
         self.batch_size   = self.params.batch_size
         self.action_std   = self.params.action_std
+
+        self.actor : Optional[ActorNetwork] = None
+        self.predictor : Optional[PredictorNetwork] = None
+        self.value_critic : Optional[CriticNetwork] = None
+        self.cost_critic : Optional[CriticNetwork] = None
+        self.penalty : Optional[PenaltyModel] = None
 
         self.models = []
 
@@ -100,11 +104,13 @@ class S3Agent(Agent):
 
         self.models = [ self.actor, self.predictor, self.value_critic ]
 
-        if params.separate_cost: 
+        if params.train_cost_critic: 
             self.cost_critic = CriticNetwork( params, "cost_critic" )
             self.models.append( self.cost_critic )
         
         self.penalty = PenaltyModel( params ) 
+
+        self.params.clipped_advantage = True
 
     def calculate_constraint( self, index, state, memory ):
         raise NotImplementedError
@@ -129,11 +135,13 @@ class ActorCriticAgent( Agent ):
 
         self.models = [ self.actor, self.value_critic ]
 
-        if params.learn_penalty:
+        if params.train_cost_critic:
             self.cost_critic = CriticNetwork( params, "cost_critic" )
             self.models.append( self.cost_critic )
 
         self.penalty = PenaltyModel( params ) 
+
+        self.params.clipped_advantage = True
 
     def learn(self):
         return learn(self)
@@ -220,7 +228,7 @@ def learn(agent: Agent):
                 surrogate_advantages = advantages * prob_ratio # scaled advantage
 
                 # if using PPO, calculate scaled + clipped advantages
-                if agent.params.clipped_adv:
+                if agent.params.clipped_advantage:
                     scaled_clipped_advantages = \
                         torch.clamp(prob_ratio, 1-clip, 1+clip) * advantages
                     surrogate_advantages = \
@@ -228,11 +236,11 @@ def learn(agent: Agent):
                 
                 actor_objective = surrogate_advantages.mean()
 
-                # Possibly use cost advantages.
+                # Sometimes use cost advantages. See safety-starter-agents
                 if has_cost_critic:
                     surrogate_cost = (prob_ratio * cost_advantages).mean()
                     actor_objective -= curr_penalty * surrogate_cost
-                    actor_objective /= (1 + curr_penalty) # ? see safety-starter-agents
+                    actor_objective /= (1 + curr_penalty)
 
                 # Loss for actor policy is negative objective
                 actor_loss = - actor_objective

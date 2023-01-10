@@ -83,14 +83,22 @@ class Runner(object):
 
                 # Save additional state data for later training
                 next_state = memory.flatten_state(next_state)
+                pred_state = run_agent_if_has('predictor', curr_state, action)
                 value      = run_agent_if_has('value_critic', next_state)
                 cost_value = run_agent_if_has('cost_critic',  next_state)
-                pred_state = run_agent_if_has('predictor', curr_state, action)
+
+                # Save cost differently depending on if reward is penalized
+                _reward, _cost, _cost_value = reward, cost, cost_value
+                if agent.reward_penalized:
+                    curr_penalty = agent.penalty.get_penalty()
+                    reward_total = reward - curr_penalty * cost
+                    reward_total = reward_total / (1 + curr_penalty)
+                    _reward, _cost, _cost_value  = reward_total, 0, 0
 
                 # Store the transition. Let cost be zero for now, as it is calculated next
                 cost = zero()
                 memory.add(curr_state, next_state, pred_state, action_mean, action,
-                    action_logprob, reward, value, cost, cost_value, done, info)
+                    action_logprob, _reward, value, _cost, _cost_value, done, info)
 
                 # Calculate constraint and add to memory after (memory used to calculate)
                 try:
