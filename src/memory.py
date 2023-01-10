@@ -37,7 +37,8 @@ class Memory:
             self.logprobs,
             self.rewards,
             self.values,
-            self.constraints,
+            self.costs,
+            self.cost_values,
             self.dones,
             self.infos
         ]
@@ -64,17 +65,24 @@ class Memory:
         Copied from:
         https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/buffer.py
         """
+        # extract necessary parameters
+        reward_decay = self.params.reward_decay
+        gae_lambda = self.params.gae_lambda
+        cost_decay = self.params.cost_decay
+        cost_lambda = self.params.cost_lambda
 
+        # Calculate for Values
         rewards = np.append(np.array(self.rewards), last_value)
         values = np.append(np.array(self.values), last_value)
         deltas = rewards[:-1] + self.reward_decay * values[1:] - values[:-1]
-        self.advantages = discount_cumsum(deltas, self.reward_decay * self.gae_lambda)
+        self.advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
         self.returns = discount_cumsum(rewards, self.gamma)[:-1]
 
+        # Calculate for costs/constraints
         costs = np.append(np.array(self.costs), last_cost_value)
         cost_values = np.append(np.array(self.cost_values), last_cost_value)
-        cdeltas = costs[:-1] + self.gamma * cost_values[1:] - cost_values[:-1]
-        self.cost_advantages = discount_cumsum(cdeltas, self.cost_decay*self.cost_lambda)
+        cost_deltas = costs[:-1] + self.gamma * cost_values[1:] - cost_values[:-1]
+        self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
         self.cost_returns = discount_cumsum(costs, self.cost_decay)[:-1]
         
         return self
@@ -91,7 +99,8 @@ class Memory:
         self.action_means = torch.stack(self.action_means).to(self.device)
         self.rewards = self.tensorify(self.rewards)
         self.values = torch.stack(self.values).to(self.device)
-        self.constraints = torch.stack(self.constraints).to(self.device)
+        self.costs = torch.stack(self.costs).to(self.device)
+        self.cost_values = torch.stack(self.cost_values).to(self.device)
         self.dones = np.array(self.dones)
         self.infos
 
@@ -104,7 +113,7 @@ class Memory:
         return self
 
     def add(self, curr_state, next_state, pred_state, action_mean, action,
-            action_logprob, reward, value, constraint, done, info):
+            action_logprob, reward, value, cost, cost_value, done, info):
         # Note that here we should only add states that are already flattened
         self.curr_states.append(curr_state)
         self.next_states.append(next_state)
@@ -114,7 +123,8 @@ class Memory:
         self.logprobs.append(action_logprob)
         self.rewards.append(reward)
         self.values.append(value)
-        self.constraints.append(constraint)
+        self.costs.append(cost)
+        self.cost_values.append(cost)
         self.dones.append(done)
         
         # List[dict]
@@ -131,7 +141,8 @@ class Memory:
         self.logprobs = []
         self.rewards = []
         self.values = []
-        self.constraints = []
+        self.costs = []
+        self.cost_values = []
         self.dones = [] 
         self.infos = []
 
