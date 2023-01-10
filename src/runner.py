@@ -42,7 +42,15 @@ class Runner(object):
         render: whether to render the environment
         """
         self.memory = self.memory if self.agent is None else self.agent.memory
-        agent_has = lambda attr : hasattr(self.agent, attr)
+        memory = self.memory
+        agent = self.agent
+        agent_has = lambda attr : hasattr(agent, attr)
+        agent_run = lambda attr, **kwargs : getattr(agent, attr)(**kwargs)
+        def run_agent_if_has(attr:str, **kwargs):
+            if not agent_has(attr):
+                return zero()
+            return agent_run(attr, **kwargs)
+
         if prev_run_data is None:
             run_data = defaultdict(list)
         else:
@@ -63,7 +71,7 @@ class Runner(object):
 
         # initialise state
         if curr_state is None:
-            curr_state = self.memory.flatten_state( self.env.reset() )
+            curr_state = memory.flatten_state( self.env.reset() )
 
         state_data = []        
         with torch.no_grad():
@@ -71,19 +79,25 @@ class Runner(object):
                 # Get the next state
                 action, action_logprob, action_mean = action_sampler( curr_state, training )
                 [ next_state, reward, done, info ] = self.env.step(np.array( action.cpu() ))
-                curr_data = {"score": reward, **info} 
-                next_state = self.memory.flatten_state(next_state)
-                value      = self.agent.critic(curr_state) if agent_has('critic') else zero()
-                pred_state = self.agent.predictor(curr_state, action) if agent_has('predictor') else zero()
+                curr_data = {"score": reward, **info}
 
-                # Store the transition
-                self.memory.add(curr_state, next_state, pred_state, action_mean, action,
-                    action_logprob, reward, value, constraint=zero(), done=done, info=info)
+                # Save additional state data for later training
+                next_state = memory.flatten_state(next_state)
+                value      = run_agent_if_has('value_critic', next_state)
+                cost_value = run_agent_if_has('cost_critic',  next_state)
+                pred_state = run_agent_if_has('predictor', curr_state, action)
+
+                # Store the transition. Let cost be zero for now, as it is calculated next
+                cost = zero()
+                memory.add(curr_state, next_state, pred_state, action_mean, action,
+                    action_logprob, reward, value, cost, cost_value, done, info)
 
                 # Calculate constraint and add to memory after (memory used to calculate)
-                if agent_has('calculate_constraint'):
-                    constraint = self.agent.calculate_constraint(i, next_state, self.memory)
-                    self.memory.constraints[-1] = constraint
+                try:
+                    cost = self.agent.calculate_constraint(i, next_state, memory)
+                    memory.cost[-1] = cost
+                except NotImplementedError:
+                    pass
 
                 for key, value in curr_data.items():
                     add_to_run_data(key, value, done)
@@ -93,13 +107,13 @@ class Runner(object):
 
                 # get things ready for next loop
                 if done:
-                    curr_state = self.memory.flatten_state( self.env.reset() )
+                    curr_state = memory.flatten_state( self.env.reset() )
                 else:
                     curr_state = next_state
 
                 actions = torch.stack([action]) if not type(action) is list else action
                 info_values = list( info.values() )
-                state_data.append([ current_time+i, done, reward, float(constraint), 
+                state_data.append([ current_time+i, done, reward, float(cost), 
                     *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
 
             assert type(curr_state) is torch.Tensor
