@@ -102,6 +102,7 @@ class Memory:
         self.costs = torch.stack(self.costs).to(self.device)
         self.cost_values = torch.stack(self.cost_values).to(self.device)
         self.dones = np.array(self.dones)
+        self.done_indices = np.array(self.done_indices)
         self.infos
 
         if self.advantages_calculated:
@@ -126,6 +127,9 @@ class Memory:
         self.costs.append(cost)
         self.cost_values.append(cost)
         self.dones.append(done)
+
+        if done:
+            self.done_indices.append(len(self.dones)-1)
         
         # List[dict]
         self.infos.append(info)
@@ -143,7 +147,8 @@ class Memory:
         self.values = []
         self.costs = []
         self.cost_values = []
-        self.dones = [] 
+        self.dones = []
+        self.done_indices = [] 
         self.infos = []
 
         # calculated arrays
