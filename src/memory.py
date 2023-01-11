@@ -4,7 +4,6 @@ given run, and processes the returned values into advantage arrays.
 # pylint: disable=attribute-defined-outside-init
 import numpy as np
 import torch
-import scipy
 from scipy.signal import lfilter
 from params import Params
 
@@ -21,8 +20,8 @@ def discount_cumsum(x, discount):
          x1 + discount * x2,
          x2]
     """
-    return lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
-
+    x_reversed = np.array( x )[::-1]
+    return lfilter([1], [1, float(-discount)], x_reversed, axis=0)[::-1]
 
 class Memory:
     """ Memory class which saves data at every timestep for the given run.
@@ -86,6 +85,9 @@ class Memory:
     def tensorify(self, array):
         return torch.stack([torch.tensor(a) for a in array]).float().to(self.device)
 
+    def numpify(self, array):
+        return np.array([np.array(a) for a in array], dtype=np.float32)
+
     def calculate_advantages(self, last_value=0, last_cost_value=0):
         """ Calculates advantages for reward and cost.
         Partially copied from:
@@ -93,31 +95,34 @@ class Memory:
         """
         # extract necessary parameters
         reward_decay = self.params.reward_decay
-        gae_lambda = self.params.gae_lambda
-        cost_decay = self.params.cost_decay
-        cost_lambda = self.params.cost_lambda
+        gae_lambda   = self.params.gae_lambda
+        cost_decay   = self.params.cost_decay
+        cost_lambda  = self.params.cost_lambda
 
         # Calculate for Values
-        rewards = np.append(np.array(self.rewards), last_value)
-        values = np.append(np.array(self.values), last_value)
-        deltas = rewards[:-1] + reward_decay * values[1:] - values[:-1]
+        rewards = self.tensorify([ *self.rewards, last_value ])
+        values  = self.tensorify([ *self.values, [last_value] ])
+        deltas  = rewards[:-1] + reward_decay * values[1:] - values[:-1]
         self.advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
         self.returns = discount_cumsum(rewards, reward_decay)[:-1]
 
         # Calculate for costs/constraints
-        costs = np.append(np.array(self.costs), last_cost_value)
-        cost_values = np.append(np.array(self.cost_values), last_cost_value)
+        costs       = self.tensorify([ *self.costs, last_cost_value ])
+        cost_values = self.tensorify([ *self.cost_values, [last_cost_value] ])
         cost_deltas = costs[:-1] + cost_decay * cost_values[1:] - cost_values[:-1]
         self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
         self.cost_returns = discount_cumsum(costs, cost_decay)[:-1]
 
         # Use normalization / rescaling of the advantage values
         eps = self.params.normalization_epsilon
-        adv_mean, adv_std = scipy.stats.norm.fit(self.advantages)
+        self.advantages = np.array(self.advantages)
+        with torch.no_grad():
+            adv_mean = self.advantages.mean()
+            adv_std  = self.advantages.std()
         self.advantages = (self.advantages - adv_mean) / (adv_std + eps)
 
         # Center, but do NOT rescale advantages for cost gradient
-        cost_adv_mean = np.mean(self.cost_advantages)
+        cost_adv_mean = self.cost_advantages.mean()
         self.cost_advantages -= cost_adv_mean
 
         self.advantages_calculated = True

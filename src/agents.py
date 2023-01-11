@@ -4,6 +4,7 @@ import time
 from typing import Optional
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from params import Params
 from memory import Memory
@@ -161,7 +162,9 @@ def learn(agent: Agent):
     kl_target_reached = False
 
     # begin training loops
-    for epoch in range(agent.params.n_epochs):
+    n_epochs = agent.params.n_epochs
+    with tqdm(total=n_epochs) as pbar:
+      for epoch in range(n_epochs):
 
         # Fine-tune the penalty parameter
         agent.penalty.learn( memory.episode_costs )
@@ -278,10 +281,13 @@ def learn(agent: Agent):
             agent.value_critic.optimizer.step()
             agent.cost_critic.optimizer.step() if hasattr(agent, 'cost_critic') else None
 
-        # post run, decay action std
-        if agent.params.actions_continuous:
-            agent.decay_action_std(0.01, 0.1)
+        pbar.update(1)
 
+    # post run, decay action std
+    if agent.params.actions_continuous:
+        agent.decay_action_std(0.01, 0.1)
+
+    # post run, clear memory
     agent.memory.clear_memory()
 
     losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }

@@ -9,6 +9,8 @@ import torch
 import numpy as np
 from memory import Memory
 
+from tqdm import tqdm
+
 warnings.filterwarnings('ignore')
 print("ignore...\n")
 
@@ -71,9 +73,10 @@ class Runner(object):
             curr_state = memory.flatten_state( self.env.reset() )
 
         state_data = []
-        for i in range(num_iter):
+        print("# Rolling out agent in environment")
+        with tqdm(total=num_iter) as pbar:
+          for i in range(num_iter):
             # Get the next state
-
             with torch.no_grad():
                 action, action_logprob, action_mean = action_sampler(curr_state, training)
 
@@ -114,7 +117,7 @@ class Runner(object):
                 memory.cost_values[-1] = _cost_value
 
             except NotImplementedError:
-                pass
+                print("Warning: Not implemented")
 
             # Save current state data
             for key, value in curr_data.items():
@@ -129,13 +132,17 @@ class Runner(object):
             else:
                 curr_state = next_state
 
-            actions = torch.stack([action]) if not isinstance(action, list) else action
-            info_values = list( info.values() )
-            state_data.append([ current_time+i, done, reward, float(cost),
-              *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
+            pbar.update(1)
 
-            assert isinstance(curr_state, torch.Tensor)
-            return curr_state, run_data, state_data
+        # Get ready ro return things
+        actions = torch.stack([action]) if not isinstance(action, list) else action
+        info_values = list( info.values() )
+        state_data.append([ current_time+i, done, reward, float(cost),
+            *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
+
+        assert isinstance(curr_state, torch.Tensor)
+
+        return curr_state, run_data, state_data
 
     def extract_distances(self, observations):
         '''

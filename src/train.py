@@ -4,6 +4,7 @@
 from typing import Optional
 from collections import defaultdict
 import argparse
+import json
 import time
 import csv
 import os
@@ -83,9 +84,10 @@ def train_model( env,
     train_states, test_states = [], []
 
     # pre-test agent as a zero datapoint
-    # TODO: Add code for testing agent again
+    # TODO: Re-add code for testing agent
 
     while timesteps < params.num_timesteps:
+        print("timesteps:", timesteps)
         # Step 1. n-step rollout
         curr_state, run_data, state_data = runner.n_step_rollout( agent.choose_action,
             curr_state, params.num_iter, render=render, prev_run_data=run_data,
@@ -215,7 +217,8 @@ def main( game_mode: str,
 
     # initialise the world state
     curr_state, state_mapping = map_and_flatten_state( env.reset() )
-    print( state_mapping, "\n" )
+    print( "# State mapping:")
+    print( json.dumps(state_mapping, indent=4) )
 
     # get parameters needed to construct the agent
     state_size  = curr_state.size()[0]
@@ -253,7 +256,8 @@ def main( game_mode: str,
         save_period=save_period,
         cumulative_limit=5,
     )
-    print("# Parameters:\n", params)
+    print("# Parameters:")
+    print(json.dumps(params._json(), indent=4))
 
     os.makedirs(params.checkpoint_dir, exist_ok=True)
 

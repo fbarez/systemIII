@@ -3,7 +3,7 @@
     "python.linting.enabled": true,
     "python.linting.pylintArgs": [
         "--generated-members", "numpy.*, torch.*",
-        "--disable", "W0212, C0116, C0103, C0325, C0209, unspecified-encoding",
+        "--disable", "W0212, C0116, C0103, C0325, C0209, unspecified-encoding, expression-not-assigned",
         "--max-line-length", "90"
     ],
 }
