@@ -227,7 +227,7 @@ def learn(agent: Agent):
                 do_early_stop, kl = agent.check_kl_early_stop()
                 if do_early_stop:
                     print(f"Early stopping at epoch {epoch} with KL divergence {kl}")
-                kl_target_reached = True
+                    kl_target_reached = True
 
             # 2.3 Calculate actor loss, only if KL divergence is low enough
             actor_loss = 0
