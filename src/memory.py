@@ -100,18 +100,18 @@ class Memory:
         cost_lambda  = self.params.cost_lambda
 
         # Calculate for Values
-        rewards = self.tensorify([ *self.rewards, last_value ])
-        values  = self.tensorify([ *self.values, [last_value] ])
+        rewards = self.tensorify([ *self.rewards, last_value ]).squeeze()
+        values  = self.tensorify([ *self.values, [last_value] ]).squeeze()
         deltas  = rewards[:-1] + reward_decay * values[1:] - values[:-1]
         self.advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
         self.returns = discount_cumsum(rewards, reward_decay)[:-1]
 
         # Calculate for costs/constraints
-        costs       = self.tensorify([ *self.costs, last_cost_value ])
-        cost_values = self.tensorify([ *self.cost_values, [last_cost_value] ])
+        costs       = self.tensorify([ *self.costs, last_cost_value ]).squeeze()
+        cost_values = self.tensorify([ *self.cost_values, [last_cost_value] ]).squeeze()
         cost_deltas = costs[:-1] + cost_decay * cost_values[1:] - cost_values[:-1]
         self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
-        self.cost_returns = discount_cumsum(costs, cost_decay)[:-1]
+        self.cost_returns    = discount_cumsum(costs, cost_decay)[:-1]
 
         # Use normalization / rescaling of the advantage values
         eps = self.params.normalization_epsilon

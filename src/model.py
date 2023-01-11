@@ -220,13 +220,15 @@ class PenaltyModel:
         self.penalty_param = torch.nn.Parameter(
             torch.tensor(penalty_param_init, dtype=torch.float32) )
 
+        self.softplus = torch.nn.Softplus()
+
         # initialize adam optimizer
         self.optimizer = torch.optim.Adam([self.penalty_param], lr=self.penalty_lr)
 
     def calculate_penalty(self):
         """Calculates the penalty based on the penalty parameters"""
         # calculate penalty based on parameter
-        penalty = torch.nn.Softplus(self.penalty_param)
+        penalty = self.softplus(self.penalty_param)
         return penalty
 
     def use_penalty(self):
