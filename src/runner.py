@@ -88,7 +88,8 @@ class Runner(object):
 
             with torch.no_grad():
                 pred_state = agent.run_if_has('predictor',state=curr_state, action=action)
-                value      = agent.run_if_has('value_critic', state=next_state)
+                state = pred_state if not torch.equal(pred_state, zero()) else curr_state
+                value      = agent.run_if_has('value_critic', state=state)
 
             # Store the transition. Let cost be zero for now, as it is calculated next
             _cost, _cost_value = zero(), zero()
@@ -99,7 +100,7 @@ class Runner(object):
             try:
                 with torch.no_grad():
                     cost = self.agent.calculate_constraint(i, next_state, memory)
-                    cost_value = agent.run_if_has('cost_critic',  state=next_state)
+                    cost_value = agent.run_if_has('cost_critic',  state=state)
                 memory.costs[-1] = cost_value
 
                 # Save cost differently depending on if reward is penalized

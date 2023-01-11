@@ -159,6 +159,10 @@ class ActorCriticAgent( Agent ):
 def learn(agent: Agent):
     # prepare advantages and other tensors used for training
     memory = agent.memory.prepare(calculate_advantages=True)
+
+    # initialize test variables
+    has_predictor = hasattr(agent, 'predictor')
+    has_cost_critic = hasattr(agent, 'cost_critic')
     kl_target_reached = False
 
     # begin training loops
@@ -186,10 +190,6 @@ def learn(agent: Agent):
             # Train in two separate steps:
             # 1. Train the Predictor
             # 2. Train the Actor and Critic(s) together
-
-            # initialize test variables
-            has_predictor = hasattr(agent, 'predictor')
-            has_cost_critic = hasattr(agent, 'cost_critic')
 
             # 1. Train the predictor (if the agent has one)
             if hasattr(agent, 'predictor'):
@@ -287,5 +287,12 @@ def learn(agent: Agent):
     # post run, clear memory
     agent.memory.clear_memory()
 
-    losses = { 'actor': actor_loss, "predictor": predictor_loss, 'critic': critic_loss }
+    losses = {}
+    losses['actor'] = -actor_objective
+    if has_predictor:
+        losses['predictor'] = predictor_loss
+    losses['value_critic'] = value_critic_loss
+    if has_cost_critic:
+        losses['cost_critic'] = cost_critic_loss
+
     return losses

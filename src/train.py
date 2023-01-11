@@ -113,14 +113,14 @@ def train_model( env,
                 train_run_data[metric]["episode"].append( initial_episode + i )
 
         scores = run_data["score"]
-        for i, score in enumerate(scores[:-1]):
-            loss_info = f'\tlosses {losses}' if i==num_dones-1 else ''
-            print('episode', initial_episode+i, 'score %.2f' % score, loss_info )
 
         scores_mean = np.mean( scores[:-1] )
-        scores_std  = np.std( scores[:-1] )
-        print(f'Episodes {initial_episode+1} - {initial_episode+len(scores)}:')
-        print(f'Score = {scores_mean} ± {scores_std}')
+        scores_std  = np.std(  scores[:-1] )
+        print(f'# Episodes {initial_episode} - {initial_episode+len(scores)}-2:')
+        print(f'Score = {"%.2f" % scores_mean} ± {"%.2f" % scores_std}')
+
+        for k, v in losses.items():
+            print(f'{k} loss = {v}')
 
         # Step 5. Test the model to gain insight into performance
         # TODO: Re-add code for testing the model
