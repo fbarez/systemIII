@@ -74,7 +74,7 @@ class Runner(object):
 
         state_data = []
         print("# Rolling out agent in environment")
-        for i in tqdm(range(num_iter)):
+        for time in tqdm(range(num_iter)):
             # Get the next state
             with torch.no_grad():
                 action, action_logprob, action_mean = action_sampler(curr_state, training)
@@ -99,7 +99,7 @@ class Runner(object):
             # Calculate constraint and add to memory after (memory used to calculate)
             try:
                 with torch.no_grad():
-                    cost = self.agent.calculate_constraint(i, next_state, memory)
+                    cost = self.agent.calculate_constraint(time, next_state, memory)
                     cost_value = agent.run_if_has('cost_critic',  state=state)
                 memory.costs[-1] = cost_value
 
@@ -135,7 +135,7 @@ class Runner(object):
         # Get ready to return things
         actions = torch.stack([action]) if not isinstance(action, list) else action
         info_values = list( info.values() )
-        state_data.append([ current_time+i, done, reward, float(cost),
+        state_data.append([ current_time+time, done, reward, float(cost),
             *actions.cpu().numpy().flatten(), *info_values, *next_state.cpu().numpy() ])
 
         assert isinstance(curr_state, torch.Tensor)
