@@ -1,9 +1,10 @@
 """ Define learning functions for training the model
 """
 
+import time
 import torch
 from tqdm import tqdm
-from agents import Agent
+from agent_base import Agent
 
 def learn(agent: Agent):
     # prepare advantages and other tensors used for training
@@ -18,7 +19,13 @@ def learn(agent: Agent):
     n_epochs = agent.params.n_epochs
     for epoch in tqdm(range(n_epochs)):
 
-        # Fine-tune the penalty parameter
+        # Train in four separate steps:
+        # 0. Train penalty parameter
+        # 1. Train the Predictor
+        # 2. Train the Critic(s)
+        # 3. Train the Actor
+
+        # 0. Fine-tune the penalty parameter
         agent.penalty.learn( memory.episode_costs )
         curr_penalty = agent.penalty.use_penalty()
 
@@ -36,17 +43,18 @@ def learn(agent: Agent):
             advantages      = memory.advantages[batch]
             cost_advantages = memory.cost_advantages[batch]
 
-            # Train in two separate steps:
-            # 1. Train the Predictor
-            # 2. Train the Actor and Critic(s) together
+            values       = memory.values[batch]
+            cost_values  = memory.cost_values[batch]
 
+            ############################################################################
             # 1. Train the predictor (if the agent has one)
+            ############################################################################
             if hasattr(agent, 'predictor'):
                 # run predictor
                 pred_states = agent.predictor(curr_states, actions)
 
-                # Get loss
                 loss_fn = torch.nn.MSELoss() # torch.nn.HuberLoss("mean")
+                # Get loss
                 predictor_loss = loss_fn(next_states, pred_states)
 
                 # Update predictor
@@ -54,80 +62,106 @@ def learn(agent: Agent):
                 predictor_loss.backward()
                 agent.predictor.optimizer.step()
 
-            # 2. Train the models for the actor and critic(s)
-            # 2.1 Run all the models to build gradients:
-            # a) Actor
-            new_logprobs, entropies = agent.actor.calculate_entropy(curr_states, actions)
 
-            # b) Run predictor, or just use current states
+            #############################################################################
+            # 2. Train critic model(s)
+            #############################################################################
+            # 2.1 Run all the models to build gradients:
+            # a) Run predictor, or just use current states
             states = curr_states
             if has_predictor:
                 states = agent.predictor(curr_states, actions)
 
-            # c) Run value critic
+            # b) Run value critic
             value_critic_value = agent.value_critic(states).squeeze()
 
-            # d) Run cost critic, if needed
+            # c) Run cost critic, if needed
             if has_cost_critic:
                 cost_critic_value   = agent.cost_critic(states).squeeze()
 
-            # 2.2 Calculate KL divergence of Actor policy.
+            # 2.2 Calculate losses
+            critic_loss = torch.tensor(0.)
+
+            value_critic_loss = torch.mean((returns - value_critic_value)**2)
+            critic_loss += value_critic_loss
+
+            if has_cost_critic:
+                cost_critic_loss  = torch.mean((cost_returns - cost_critic_value)**2)
+                critic_loss += cost_critic_loss
+
+            # 2.3 Backprop loss for actor and critic(s)
+            [ model.optimizer.zero_grad() for model in agent.models ]
+            critic_loss.backward()
+            agent.value_critic.optimizer.step()
+            agent.cost_critic.optimizer.step() if hasattr(agent, 'cost_critic') else None
+
+
+            #############################################################################
+            # 3. Train the Actor
+            #############################################################################
+            # 3.1 ONLY UPDATE ACTOR IF KL-DIVERGENCE SUFFICIENTLY SMALL else continue
+            if kl_target_reached:
+                continue
+
+            # 3.2 Calculate difference in policy at the moment
+            new_logprobs, entropies = agent.actor.calculate_entropy(curr_states, actions)
+
+            # 3.3 Calculate KL divergence of Actor policy.
             if not kl_target_reached:
                 do_early_stop, kl = agent.check_kl_early_stop()
                 if do_early_stop:
                     print(f"Early stopping at epoch {epoch} with KL divergence {kl}")
                     kl_target_reached = True
+                    continue
 
-            # 2.3 Calculate actor loss, only if KL divergence is low enough
-            actor_loss = 0
-            if not kl_target_reached:
-                # calculate scaled advantages
-                prob_ratio = ( new_logprobs - old_logprobs ).exp() # Likelihood ratio
-                clip = agent.params.policy_clip
-                surrogate_advantages = advantages * prob_ratio # scaled advantage
+            # 3.4 If using predictors, calculate slightly modified advantages w/ gradient
+            states = curr_states
 
-                # if using PPO, calculate scaled + clipped advantages
-                if agent.params.clipped_advantage:
-                    scaled_clipped_advantages = \
-                        torch.clamp(prob_ratio, 1-clip, 1+clip) * advantages
-                    surrogate_advantages = \
-                        torch.min(surrogate_advantages, scaled_clipped_advantages)
+            if has_predictor:
+                states                  = agent.predictor(curr_states, actions)
+                value_critic_values     = agent.value_critic(states).squeeze()
+                advantages += ( values - value_critic_values )
 
-                actor_objective = surrogate_advantages.mean()
+            if has_predictor and has_cost_critic:
+                cost_critic_values = agent.cost_critic(states).squeeze()
+                cost_advantages += ( cost_values - cost_critic_values )
 
-                # Sometimes use cost advantages. See safety-starter-agents
-                if has_cost_critic:
-                    surrogate_cost = (prob_ratio * cost_advantages).mean()
-                    actor_objective -= curr_penalty * surrogate_cost
-                    actor_objective /= (1 + curr_penalty)
+            # 3.5 calculate scaled advantages
+            prob_ratio = ( new_logprobs - old_logprobs ).exp() # Likelihood ratio
+            clip = agent.params.policy_clip
+            surrogate_advantages = advantages * prob_ratio # scaled advantage
 
-                # Loss for actor policy is negative objective
-                actor_loss = - actor_objective
+            # if using PPO, calculate scaled + clipped advantages
+            if agent.params.clipped_advantage:
+                scaled_clipped_advantages = \
+                    torch.clamp(prob_ratio, 1-clip, 1+clip) * advantages
+                surrogate_advantages = \
+                    torch.min(surrogate_advantages, scaled_clipped_advantages)
 
-            # 2.4 Calculate loss for value critic
-            value_critic_loss = torch.mean((returns - value_critic_value)**2)
-            critic_loss = value_critic_loss
+            actor_objective = surrogate_advantages.mean()
 
-            # 2.5 Calculate loss for cost critic, if needed
+            # Sometimes use cost advantages too. See safety-starter-agents
             if has_cost_critic:
-                cost_critic_loss  = torch.mean((cost_returns - cost_critic_value)**2)
-                critic_loss += cost_critic_loss
+                surrogate_cost = (prob_ratio * cost_advantages).mean()
+                actor_objective -= curr_penalty * surrogate_cost
+                actor_objective /= (1 + curr_penalty)
 
-            # 2.6 Add optional entropy loss term
+            # Loss for actor policy is negative objective
+            actor_loss = - actor_objective
+
+            # Optionally, calculate entropy loss term
+            entropy_loss = 0
             entropy_regularization = agent.params.entropy_regularization
             if entropy_regularization != 0:
                 entropy_loss = entropy_regularization * entropies.mean()
 
-            # 2.7 Calculate total loss for actor and critics
-            total_loss = actor_loss + 0.5*critic_loss + entropy_loss
-            for model in agent.models:
-                model.optimizer.zero_grad()
+            total_loss = actor_loss + entropy_loss
 
-            # 2.8 Backprop loss for actor and critic(s)
+            # 3.6 Backprop loss for actor
+            [ model.optimizer.zero_grad() for model in agent.models ]
             total_loss.backward()
-            agent.actor.optimizer.step()
-            agent.value_critic.optimizer.step()
-            agent.cost_critic.optimizer.step() if hasattr(agent, 'cost_critic') else None
+            agent.predictor.optimizer.step()
+
 
     # post run, decay action std
     if agent.params.actions_continuous:
@@ -137,11 +171,12 @@ def learn(agent: Agent):
     agent.memory.clear_memory()
 
     losses = {}
-    losses['actor'] = -actor_objective
+    losses['actor']           = -actor_objective
     if has_predictor:
-        losses['predictor'] = predictor_loss
-    losses['value_critic'] = value_critic_loss
+        losses['predictor']   = predictor_loss
+    losses['value_critic']    = value_critic_loss
     if has_cost_critic:
         losses['cost_critic'] = cost_critic_loss
+    losses['penalty'] = curr_penalty
 
     return losses

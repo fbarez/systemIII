@@ -101,14 +101,20 @@ class Memory:
 
         # Calculate for Values
         rewards = self.tensorify([ *self.rewards, last_value ]).squeeze()
-        values  = self.tensorify([ *self.values, [last_value] ]).squeeze()
+        values  = self.tensorify([ *self.values, last_value ]).squeeze()
         deltas  = rewards[:-1] + reward_decay * values[1:] - values[:-1]
+
+        # Calculate advantages.
         self.advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
         self.returns = discount_cumsum(rewards, reward_decay)[:-1]
+        # => advantages[0] == rewards[0] +       g   * values[1] -             values[0]
+        #      +  g   * l   * rewards[1] +  l  * g^2 * values[2] - g   * l   * values[1]
+        #      +  g^2 * l^2 * rewards[2] + l^2 * g^3 * values[2] - g^2 * l^2 * values[2]
+        #      + ...
 
         # Calculate for costs/constraints
         costs       = self.tensorify([ *self.costs, last_cost_value ]).squeeze()
-        cost_values = self.tensorify([ *self.cost_values, [last_cost_value] ]).squeeze()
+        cost_values = self.tensorify([ *self.cost_values, last_cost_value ]).squeeze()
         cost_deltas = costs[:-1] + cost_decay * cost_values[1:] - cost_values[:-1]
         self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
         self.cost_returns    = discount_cumsum(costs, cost_decay)[:-1]
@@ -140,9 +146,9 @@ class Memory:
         self.logprobs = torch.stack(self.logprobs).to(self.device)
         self.action_means = torch.stack(self.action_means).to(self.device)
         self.rewards = self.tensorify(self.rewards)
-        self.values = torch.stack(self.values).to(self.device)
+        self.values = torch.tensor(self.values).to(self.device)
         self.costs = torch.stack(self.costs).to(self.device)
-        self.cost_values = torch.stack(self.cost_values).to(self.device)
+        self.cost_values = torch.tensor(self.cost_values).to(self.device)
         self.dones = np.array(self.dones)
         self.infos = self.infos
 
@@ -172,9 +178,9 @@ class Memory:
         self.actions.append(action)
         self.logprobs.append(action_logprob)
         self.rewards.append(reward)
-        self.values.append(value)
+        self.values.append(value.item())
         self.costs.append(cost)
-        self.cost_values.append(cost_value)
+        self.cost_values.append(cost_value.item())
         self.dones.append(done)
 
         # episode values

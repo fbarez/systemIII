@@ -39,7 +39,7 @@ def main( game_mode: str,
         num_timesteps = 1e7
 
         actions_continuous = True
-        num_iter      = 30000
+        num_iter      = 3000
         batch_size    = 100
         num_epochs    = 80
         save_period   = num_iter*5
@@ -129,7 +129,8 @@ def main( game_mode: str,
         kl_target=kl_target,
         cost_decay=cost_decay,
         cost_lambda=cost_lambda,
-        train_cost_critic=True,
+        train_cost_critic=False,
+        penalty_init=0.0001,
         checkpoint_dir=f"tmp/models/{game_mode}/{agent_type}/{model_name}",
         agent_type=agent_type,
         game_mode=game_mode,

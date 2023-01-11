@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Extract a column of data from the states CSV and summarise into episodes')
     parser.add_argument('input_file', metavar='input_file', type=str, help='input file of training_states')
     parser.add_argument('output_file', metavar='output_file', type=str, help='output file of training-scores.csv')
-    parser.add_argument('--header', metavar='output_file', type=str, help='header to look at', default='constraints')
+    parser.add_argument('--header', metavar='output_file', type=str, help='header to look at', default='constraint')
     args = parser.parse_args()
 
     extract_from_states( args.input_file, args.output_file, args.header )
