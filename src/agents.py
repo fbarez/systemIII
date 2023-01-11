@@ -163,8 +163,7 @@ def learn(agent: Agent):
 
     # begin training loops
     n_epochs = agent.params.n_epochs
-    with tqdm(total=n_epochs) as pbar:
-      for epoch in range(n_epochs):
+    for epoch in tqdm(range(n_epochs)):
 
         # Fine-tune the penalty parameter
         agent.penalty.learn( memory.episode_costs )
@@ -280,8 +279,6 @@ def learn(agent: Agent):
             agent.actor.optimizer.step()
             agent.value_critic.optimizer.step()
             agent.cost_critic.optimizer.step() if hasattr(agent, 'cost_critic') else None
-
-        pbar.update(1)
 
     # post run, decay action std
     if agent.params.actions_continuous:

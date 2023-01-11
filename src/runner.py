@@ -74,8 +74,7 @@ class Runner(object):
 
         state_data = []
         print("# Rolling out agent in environment")
-        with tqdm(total=num_iter) as pbar:
-          for i in range(num_iter):
+        for i in tqdm(range(num_iter)):
             # Get the next state
             with torch.no_grad():
                 action, action_logprob, action_mean = action_sampler(curr_state, training)
@@ -132,9 +131,7 @@ class Runner(object):
             else:
                 curr_state = next_state
 
-            pbar.update(1)
-
-        # Get ready ro return things
+        # Get ready to return things
         actions = torch.stack([action]) if not isinstance(action, list) else action
         info_values = list( info.values() )
         state_data.append([ current_time+i, done, reward, float(cost),
