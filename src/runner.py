@@ -40,15 +40,17 @@ class Runner(object):
                         prev_run_data: Optional[Dict[str, list]] = None,
                         training: bool = False,
                         current_time: int = 0 ):
-        """[summary]
+        """
         action_sampler: function that takes in a state and returns an action
-        current_state: the initial state of the rollout
+        curr_state: the initial state of the rollout
         num_iter: number of iterations to run the rollout
         render: whether to render the environment
+        prev_run_data: Dictionary of some previous run data
+        training: whether to render the
         """
         self.memory = self.memory if self.agent is None else self.agent.memory
         memory = self.memory
-        agent = self.agent
+        agent  = self.agent
 
         if prev_run_data is None:
             run_data = defaultdict(list)
@@ -123,7 +125,7 @@ class Runner(object):
                 memory.cost_values[-1] = _cost_value
 
             except NotImplementedError:
-                print("Warning: Not implemented")
+                print("Warning: calculate_constraint Not implemented")
 
             # Save current state data
             for key, value in curr_data.items():
