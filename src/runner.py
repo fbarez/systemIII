@@ -92,9 +92,10 @@ class Runner(object):
             with torch.no_grad():
 
                 if agent.has_predictor:
-                    # THIS NEEDS TO curr_state OR IT DOES NOT WORK
-                    # I DO NOT UNDERSTAND WHY
-                    _state = next_state
+                    # THIS NEEDS TO STAY curr_state OR IT DOES NOT WORK ???
+                    _state = curr_state
+                    # _pred_state = agent.predictor(curr_state, action)
+                    # _state = _pred_state
 
                 if agent.has_value_critic:
                     _value = agent.value_critic(_state)

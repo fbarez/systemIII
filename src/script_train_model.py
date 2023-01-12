@@ -107,7 +107,7 @@ def main( game_mode: str,
     # initialise the world state
     curr_state, state_mapping = map_and_flatten_state( env.reset() )
     print( "# State mapping:")
-    print( json.dumps(state_mapping, indent=4) )
+    print( json.dumps({k: str(v) for k,v in state_mapping.items()}, indent=4) )
 
     # get parameters needed to construct the agent
     state_size  = curr_state.size()[0]

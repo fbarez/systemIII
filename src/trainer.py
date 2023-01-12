@@ -109,7 +109,7 @@ def trainer( env,
         print(f'{"%20s"%"Score"} = {"%.2f" % scores_mean} ± {"%.2f" % scores_std}')
 
         for k, v in losses.items():
-            print(f'{"%20s"%f"{k} loss "} = {v}')
+            print(f'{"%20s"%f"{k}"} = {v}')
 
         # Step 5. Test the model to gain insight into performance
         # TODO: Re-add code for testing the model
