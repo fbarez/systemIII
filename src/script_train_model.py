@@ -39,7 +39,7 @@ def main( game_mode: str,
         num_timesteps = 1e7
 
         actions_continuous = True
-        num_iter      = 3000
+        num_iter      = 30000
         batch_size    = 100
         num_epochs    = 80
         save_period   = num_iter*5
