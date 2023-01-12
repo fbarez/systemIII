@@ -152,36 +152,33 @@ def main( game_mode: str,
     os.makedirs(params.checkpoint_dir, exist_ok=True)
 
     train_data_log = []
-    test_data_log  = []
     for _ in range(num_agents_to_train):
         # run the training
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
         agent = agent_constructor(params)
-        train_data, test_data = trainer( env, agent, params, run_name, render )
+        train_data = trainer( env, agent, params, run_name, render )
 
         train_data_log.append( train_data )
-        test_data_log.append( test_data )
 
         # save the scores from this run
-        for data_collection, name in [(train_data, "training"), (test_data, "test")]:
-            for metric, data_dict in data_collection.items():
-                print( metric, ":", data_dict )
-                folder_name = f"runs/{model_name}"
-                os.makedirs(folder_name, exist_ok=True)
-                with open(f"{folder_name}/{name}-{metric}-{run_name}.csv", "w") as f:
-                    writer = csv.writer(f)
-                    for label, data in data_dict.items():
-                        writer.writerow([label] + data)
+        for metric, data_dict in train_data.items():
+            print( metric, ":", data_dict )
+            folder_name = f"runs/{model_name}"
+            os.makedirs(folder_name, exist_ok=True)
+            with open(f"{folder_name}/training-{metric}-{run_name}.csv", "w") as f:
+                writer = csv.writer(f)
+                for label, data in data_dict.items():
+                    writer.writerow([label] + data)
 
-                # plot the scores
-                _fig = plot_scores( data_dict, window_size=10, label=metric )
-                folder_name = f"figs/{model_name}"
-                os.makedirs(folder_name, exist_ok=True)
-                file_name = f"{folder_name}/{name}-{metric}-{run_name}.png"
-                plt.title( metric )
-                plt.savefig( file_name, dpi=300 )
+            # plot the scores
+            _fig = plot_scores( data_dict, window_size=10, label=metric )
+            folder_name = f"figs/{model_name}"
+            os.makedirs(folder_name, exist_ok=True)
+            file_name = f"{folder_name}/training-{metric}-{run_name}.png"
+            plt.title( metric )
+            plt.savefig( file_name, dpi=300 )
 
     plt.show()
 
