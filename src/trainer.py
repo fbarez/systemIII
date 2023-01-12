@@ -89,7 +89,7 @@ def trainer( env,
 
         # Step 3. Learn
         losses = agent.learn()
-        losses = { k:round(float(v),2) for k,v in losses.items()}
+        losses = { k:round(float(v),3) for k,v in losses.items()}
 
         # Step 4. Print some info about the training so far
         initial_episode = episode

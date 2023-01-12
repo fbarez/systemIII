@@ -62,7 +62,7 @@ def main( game_mode: str,
         num_timesteps = 100000
 
         actions_continuous = False
-        num_iter      = 100
+        num_iter      = 1000
         batch_size    = 20
         num_epochs    = 4
         save_period   = num_iter*5
@@ -74,7 +74,8 @@ def main( game_mode: str,
         reward_decay  = 0.99
         gae_lambda    = 0.95
         reward_decay  = 0.99
-        gae_lambda    = 0.95
+        cost_lambda   = 0.95
+        cost_decay    = 0.99
         learning_rate = 0.0003
         kl_target     = 0
 

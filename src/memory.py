@@ -2,8 +2,10 @@
 given run, and processes the returned values into advantage arrays.
 """
 # pylint: disable=attribute-defined-outside-init
+from typing import Optional
 import numpy as np
 import torch
+from torch import Tensor
 from scipy.signal import lfilter
 from params import Params
 
@@ -71,12 +73,12 @@ class Memory:
 
         # ensure all arrays that recored each episode are equal length
         episode_arrays = [
-            self.done_indices,
+            self.done_indices[:-1],
             self.episode_costs,
             self.episode_rewards,
         ]
 
-        n_episodes = len(self.done_indices)
+        n_episodes = len(self.done_indices[:-1])
         for a in episode_arrays:
             assert len(a) == n_episodes
 
@@ -88,55 +90,86 @@ class Memory:
     def numpify(self, array):
         return np.array([np.array(a) for a in array], dtype=np.float32)
 
-    def calculate_advantages(self, last_value=0, last_cost_value=0):
+    def calculate_advantages(self,
+            start_index:Optional[int] = None,
+            end_index:Optional[int] = None,
+            last_value:Optional[Tensor] = 0,
+            last_cost_value:Optional[Tensor] =0
+        ):
         """ Calculates advantages for reward and cost.
         Partially copied from:
         https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/buffer.py
         """
+        start_index = self.done_indices[-2] if start_index is None else start_index
+        end_index   = self.done_indices[-1] if end_index is None   else end_index
+        if start_index == end_index:
+            return self
+
         # extract necessary parameters
         reward_decay = self.params.reward_decay
         gae_lambda   = self.params.gae_lambda
         cost_decay   = self.params.cost_decay
         cost_lambda  = self.params.cost_lambda
 
+        rewards = self.rewards[ start_index:end_index ]
+        values  = self.values[ start_index:end_index ]
+        costs   = self.costs[ start_index:end_index ]
+        cost_values = self.cost_values[ start_index:end_index]
+
         # Calculate for Values
-        rewards = self.tensorify([ *self.rewards, last_value ]).squeeze()
-        values  = self.tensorify([ *self.values, last_value ]).squeeze()
+        rewards = self.tensorify([ *rewards, last_value ]).squeeze()
+        values  = self.tensorify([ *values, last_value ]).squeeze()
         deltas  = rewards[:-1] + reward_decay * values[1:] - values[:-1]
 
         # Calculate advantages.
-        self.advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
-        self.returns = discount_cumsum(rewards, reward_decay)[:-1]
+        ep_advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
+        ep_returns    = discount_cumsum(rewards, reward_decay)[:-1]
         # => advantages[0] == rewards[0] +       g   * values[1] -             values[0]
         #      +  g   * l   * rewards[1] +  l  * g^2 * values[2] - g   * l   * values[1]
         #      +  g^2 * l^2 * rewards[2] + l^2 * g^3 * values[2] - g^2 * l^2 * values[2]
         #      + ...
 
         # Calculate for costs/constraints
-        costs       = self.tensorify([ *self.costs, last_cost_value ]).squeeze()
-        cost_values = self.tensorify([ *self.cost_values, last_cost_value ]).squeeze()
+        costs       = self.tensorify([ *costs, last_cost_value ]).squeeze()
+        cost_values = self.tensorify([ *cost_values, last_cost_value ]).squeeze()
         cost_deltas = costs[:-1] + cost_decay * cost_values[1:] - cost_values[:-1]
-        self.cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
-        self.cost_returns    = discount_cumsum(costs, cost_decay)[:-1]
+        ep_cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
+        ep_cost_returns    = discount_cumsum(costs, cost_decay)[:-1]
 
+        # save results to memory
+        # pylint: disable=unexpected-keyword-arg
+        self.advantages      = \
+            np.concatenate( [self.advantages, ep_advantages], dtype=np.float32 )
+        self.returns         = \
+            np.concatenate( [self.returns, ep_returns], dtype=np.float32 )
+        self.cost_advantages = \
+            np.concatenate( [self.cost_advantages, ep_cost_advantages], dtype=np.float32 )
+        self.cost_returns    = \
+            np.concatenate( [self.cost_returns, ep_cost_returns], dtype=np.float32 )
+
+        return self
+
+    def normalize_advantages(self):
         # Use normalization / rescaling of the advantage values
         eps = self.params.normalization_epsilon
         self.advantages = np.array(self.advantages)
         with torch.no_grad():
             adv_mean = self.advantages.mean()
             adv_std  = self.advantages.std()
-        self.advantages = (self.advantages - adv_mean) / (adv_std + eps)
+        self.advantages_scaling = (adv_std + eps)
+        self.advantages = (self.advantages - adv_mean) / self.advantages_scaling
+
 
         # Center, but do NOT rescale advantages for cost gradient
         cost_adv_mean = self.cost_advantages.mean()
         self.cost_advantages -= cost_adv_mean
 
         self.advantages_calculated = True
-        return self
 
     def prepare(self, calculate_advantages=False):
         if calculate_advantages:
-            self.calculate_advantages()
+            self.calculate_advantages(start_index=self.done_indices[-1], end_index=len(self.dones))
+        self.normalize_advantages()
 
         # arrays that record data for each timestep
         self.curr_states = torch.stack(self.curr_states).to(self.device)
@@ -191,6 +224,7 @@ class Memory:
             self.done_indices.append(len(self.dones)-1)
             self.episode_costs.append(0)
             self.episode_rewards.append(0)
+            self.calculate_advantages()
 
         # List[dict]
         self.infos.append(info)
@@ -212,16 +246,19 @@ class Memory:
         self.infos = []
 
         # episode arrays
-        self.done_indices = []
+        self.done_indices = [0]
         self.episode_costs = [0]
         self.episode_rewards = [0]
 
         # calculated arrays
         self.advantages_calculated = False
-        self.advantages = []
-        self.returns = []
-        self.cost_advantages = []
-        self.cost_returns = []
+        self.advantages = np.array([], dtype=np.float32)
+        self.returns = np.array([], dtype=np.float32)
+        self.cost_advantages = np.array([], dtype=np.float32)
+        self.cost_returns = np.array([], dtype=np.float32)
+
+        self.advantages_scaling = 1.
+        self.cost_advantages_scaling = 1.
 
         return self
 

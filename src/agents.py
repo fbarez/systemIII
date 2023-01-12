@@ -25,7 +25,8 @@ class S3Agent(Agent):
             self.cost_critic = CriticNetwork( params, "cost_critic" )
             self.models.append( self.cost_critic )
 
-        self.penalty = PenaltyModel( params )
+            self.penalty = PenaltyModel( params )
+            self.models.append( self.penalty )
 
         self.params.clipped_advantage = True
 
@@ -56,7 +57,8 @@ class ActorCriticAgent( Agent ):
             self.cost_critic = CriticNetwork( params, "cost_critic" )
             self.models.append( self.cost_critic )
 
-        self.penalty = PenaltyModel( params )
+            self.penalty = PenaltyModel( params )
+            self.models.append( self.penalty)
 
         self.params.clipped_advantage = True
 

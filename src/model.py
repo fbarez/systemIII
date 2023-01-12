@@ -30,6 +30,7 @@ class ActorNetwork(nn.Module):
 
         # shortcut to parameters
         p = params
+        self.name = 'actor'
         self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
         self.update_checkpoint(p)
@@ -130,6 +131,7 @@ class PredictorNetwork(nn.Module):
     def __init__(self, params:Params):
         super(PredictorNetwork, self).__init__()
         p = params
+        self.name = 'predictor'
         self.device = torch.device('cuda' if p.use_cuda else 'cpu')
 
         self.update_checkpoint(p)
@@ -209,6 +211,7 @@ class PenaltyModel:
     https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/run_agent.py#L134
     """
     def __init__(self, params:Params):
+        self.name = 'penalty'
         self.cost_limit = params.cost_limit # default 25
         self.penalty_init = params.penalty_init # default 1.
         self.penalty_lr = params.penalty_lr # default 5e-2

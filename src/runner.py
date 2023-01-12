@@ -84,31 +84,35 @@ class Runner(object):
 
             # Save additional state data for later training
             next_state = memory.flatten_state(next_state)
-            # pylint
+
+            # define some some _variables, indicating they might change
+            _state, _reward = curr_state, reward
+            _pred_state, _value, _cost, _cost_value = zero(), zero(), zero(), zero()
 
             with torch.no_grad():
-                pred_state = agent.run_if_has('predictor',state=curr_state, action=action)
-                state = pred_state if not torch.equal(pred_state, zero()) else curr_state
-                value      = agent.run_if_has('value_critic', state=state)
+
+                if agent.has_predictor:
+                    _pred_state = agent.predictor(curr_state, action)
+                    _state = _pred_state
+
+                if agent.has_value_critic:
+                    _value = agent.value_critic(_state)
 
             # Store the transition. Let cost be zero for now, as it is calculated next
-            _cost, _cost_value = zero(), zero()
-            memory.add(curr_state, next_state, pred_state, action_mean, action,
-                action_logprob, reward, value, _cost, _cost_value, done, info)
+            memory.add(curr_state, next_state, _pred_state, action_mean, action,
+                action_logprob, reward, _value, _cost, _cost_value, done, info)
 
             # Calculate constraint and add to memory after (memory used to calculate)
             try:
                 with torch.no_grad():
                     cost = self.agent.calculate_constraint(time, next_state, memory)
-                    cost_value = agent.run_if_has('cost_critic',  state=state)
-                memory.costs[-1] = cost_value
 
-                # Save cost differently depending on if reward is penalized
-                _reward, _cost, _cost_value = reward, cost, cost_value
+                if agent.has_cost_critic:
+                    _cost_value = agent.cost_critic(_state)
 
                 if agent.params.reward_penalized:
                     curr_penalty = agent.penalty.use_penalty()
-                    reward_total = reward - curr_penalty * cost
+                    reward_total = reward - curr_penalty * _cost
                     reward_total = reward_total / (1 + curr_penalty)
                     _reward, _cost, _cost_value  = reward_total, zero(), zero()
 
@@ -141,51 +145,3 @@ class Runner(object):
         assert isinstance(curr_state, torch.Tensor)
 
         return curr_state, run_data, state_data
-
-    def extract_distances(self, observations):
-        '''
-        Return a robot-centric lidar observation of a list of positions.
-        Lidar is a set of bins around the robot (divided evenly in a circle).
-        The detection directions are exclusive and exhaustive for a full 360 view.
-        Each bin reads 0 if there are no objects in that direction.
-        If there are multiple objects, the distance to the closest one is used.
-        Otherwise the bin reads the fraction of the distance towards the robot.
-        E.g. if the object is 90% of lidar_max_dist away, the bin will read 0.1,
-        and if the object is 10% of lidar_max_dist away, the bin will read 0.9.
-        (The reading can be thought of as "closeness" or inverse distance)
-        This encoding has some desirable properties:
-        - bins read 0 when empty
-        - bins smoothly increase as objects get close
-        - maximum reading is 1.0 (where the object overlaps the robot)
-        - close objects occlude far objects
-        - constant size observation with variable numbers of objects
-        '''
-
-        #env.reset()
-        distances = []
-        agent_positions = []
-        hazard_positions = []
-        probs = []
-        actions = []
-
-        for state in observations:
-            distances.append((1-state['hazards_lidar'])*self.env.config['lidar_max_dist'])
-
-            probs.append(state['hazards_lidar'])
-
-            #get agent's current position
-            agent_positions.append(self.env.world.robot_pos())
-
-            #get position of the hazards
-            for h_pos in self.env.hazards_pos:
-                hazard_positions.append(h_pos)
-
-        distances      = np.array(distances)
-        weight_literal = 1 - distances
-        probs = np.array(probs)
-        hazard_positions = np.array(hazard_positions)
-        agent_positions  = np.array(agent_positions)
-        actions = np.array(actions)
-
-        return distances, weight_literal, probs, \
-            agent_positions, hazard_positions, actions

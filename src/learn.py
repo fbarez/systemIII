@@ -11,8 +11,6 @@ def learn(agent: Agent):
     memory = agent.memory.prepare(calculate_advantages=True)
 
     # initialize test variables
-    has_predictor = hasattr(agent, 'predictor')
-    has_cost_critic = hasattr(agent, 'cost_critic')
     kl_target_reached = False
 
     # begin training loops
@@ -26,8 +24,9 @@ def learn(agent: Agent):
         # 3. Train the Actor
 
         # 0. Fine-tune the penalty parameter
-        agent.penalty.learn( memory.episode_costs )
-        curr_penalty = agent.penalty.use_penalty()
+        if agent.has_penalty:
+            agent.penalty.learn( memory.episode_costs )
+            curr_penalty = agent.penalty.use_penalty()
 
         # Create the batches for training agent networks
         batches = agent.generate_batches()
@@ -49,52 +48,48 @@ def learn(agent: Agent):
             ############################################################################
             # 1. Train the predictor (if the agent has one)
             ############################################################################
-            if hasattr(agent, 'predictor'):
+            if agent.has_predictor:
                 # run predictor
                 pred_states = agent.predictor(curr_states, actions)
 
-                loss_fn = torch.nn.MSELoss() # torch.nn.HuberLoss("mean")
+                loss_fn = torch.nn.HuberLoss("mean") # torch.nn.MSELoss()
                 # Get loss
                 predictor_loss = loss_fn(next_states, pred_states)
 
                 # Update predictor
-                agent.predictor.optimizer.zero_grad()
+                [ model.zero_grad() for model in agent.models ]
                 predictor_loss.backward()
                 agent.predictor.optimizer.step()
-
 
             #############################################################################
             # 2. Train critic model(s)
             #############################################################################
             # 2.1 Run all the models to build gradients:
             # a) Run predictor, or just use current states
-            states = curr_states
-            if has_predictor:
-                states = agent.predictor(curr_states, actions)
-
-            # b) Run value critic
-            value_critic_value = agent.value_critic(states).squeeze()
-
-            # c) Run cost critic, if needed
-            if has_cost_critic:
-                cost_critic_value   = agent.cost_critic(states).squeeze()
-
-            # 2.2 Calculate losses
+            loss_fn     = torch.nn.HuberLoss("mean") #torch.nn.MSELoss()
             critic_loss = torch.tensor(0.)
+            states      = curr_states
 
-            value_critic_loss = torch.mean((returns - value_critic_value)**2)
+            if agent.has_predictor:
+                with torch.no_grad():
+                    states = agent.predictor(curr_states, actions)
+
+            # Get loss for value critic
+            value_critic_value = agent.value_critic(states).squeeze()
+            value_critic_loss  = loss_fn(returns, value_critic_value)
             critic_loss += value_critic_loss
 
-            if has_cost_critic:
-                cost_critic_loss  = torch.mean((cost_returns - cost_critic_value)**2)
+            # Get loss for cost critic, if needed
+            if agent.has_cost_critic:
+                cost_critic_value = agent.cost_critic(states).squeeze()
+                cost_critic_loss  = loss_fn(cost_returns, cost_critic_value)
                 critic_loss += cost_critic_loss
 
-            # 2.3 Backprop loss for actor and critic(s)
+            # 2.3 Backprop loss for critic(s)
             [ model.optimizer.zero_grad() for model in agent.models ]
             critic_loss.backward()
             agent.value_critic.optimizer.step()
-            agent.cost_critic.optimizer.step() if hasattr(agent, 'cost_critic') else None
-
+            agent.cost_critic.optimizer.step() if agent.has_cost_critic else None
 
             #############################################################################
             # 3. Train the Actor
@@ -115,14 +110,15 @@ def learn(agent: Agent):
                     continue
 
             # 3.4 If using predictors, calculate slightly modified advantages w/ gradient
-            states = curr_states
-
-            if has_predictor:
+            if agent.has_predictor:
                 states                  = agent.predictor(curr_states, actions)
                 value_critic_values     = agent.value_critic(states).squeeze()
-                advantages += ( values - value_critic_values )
+                value_deltas  = values - value_critic_values
+                value_deltas /= memory.advantages_scaling
+                value_deltas  = value_deltas.clamp(-0.05, 0.05)
+                advantages += value_deltas
 
-            if has_predictor and has_cost_critic:
+            if agent.has_predictor and agent.has_cost_critic:
                 cost_critic_values = agent.cost_critic(states).squeeze()
                 cost_advantages += ( cost_values - cost_critic_values )
 
@@ -131,8 +127,7 @@ def learn(agent: Agent):
             clip = agent.params.policy_clip
             surrogate_advantages = advantages * prob_ratio # scaled advantage
 
-            # if using PPO, calculate scaled + clipped advantages
-            if agent.params.clipped_advantage:
+            if agent.params.clipped_advantage: # PPO
                 scaled_clipped_advantages = \
                     torch.clamp(prob_ratio, 1-clip, 1+clip) * advantages
                 surrogate_advantages = \
@@ -141,7 +136,7 @@ def learn(agent: Agent):
             actor_objective = surrogate_advantages.mean()
 
             # Sometimes use cost advantages too. See safety-starter-agents
-            if has_cost_critic:
+            if agent.has_cost_critic:
                 surrogate_cost = (prob_ratio * cost_advantages).mean()
                 actor_objective -= curr_penalty * surrogate_cost
                 actor_objective /= (1 + curr_penalty)
@@ -160,8 +155,7 @@ def learn(agent: Agent):
             # 3.6 Backprop loss for actor
             [ model.optimizer.zero_grad() for model in agent.models ]
             total_loss.backward()
-            agent.predictor.optimizer.step()
-
+            agent.actor.optimizer.step()
 
     # post run, decay action std
     if agent.params.actions_continuous:
@@ -172,11 +166,11 @@ def learn(agent: Agent):
 
     losses = {}
     losses['actor']           = -actor_objective
-    if has_predictor:
+    if agent.has_predictor:
         losses['predictor']   = predictor_loss
     losses['value_critic']    = value_critic_loss
-    if has_cost_critic:
+    if agent.has_cost_critic:
         losses['cost_critic'] = cost_critic_loss
-    losses['penalty'] = curr_penalty
+        losses['penalty'] = curr_penalty
 
     return losses
