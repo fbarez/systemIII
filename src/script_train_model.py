@@ -83,6 +83,7 @@ def main( game_mode: str,
     else:
         raise ValueError("game_mode must be 'car' or 'cartpole'")
 
+    # Choose the constraint calculation functions
     # pylint: disable=missing-class-docstring
     class S3AgentConstructor(S3Agent):
         def calculate_constraint( self, index: int,
@@ -103,12 +104,12 @@ def main( game_mode: str,
     else:
         raise ValueError("Invalid agent type")
 
-    # initialise the world state
+    # Initialise the world state
     curr_state, state_mapping = map_and_flatten_state( env.reset() )
     print( "# State mapping:")
     print( json.dumps({k: str(v) for k,v in state_mapping.items()}, indent=4) )
 
-    # get parameters needed to construct the agent
+    # Get the parameters needed to construct the agent
     state_size  = curr_state.size()[0]
     action_size = \
         env.action_space.n if not actions_continuous else env.action_space.shape[0]
@@ -155,36 +156,40 @@ def main( game_mode: str,
 
     os.makedirs(params.checkpoint_dir, exist_ok=True)
 
-    train_data_log = []
+    # Finally, train the agents
     for _ in range(num_agents_to_train):
-        # run the training
+        # initialize training run variables
         time_str = time.strftime("%Y.%m.%d.%H:%M:%S", time.localtime())
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
+        # Initialize and Train the Model
         agent = agent_constructor(params)
         train_data = trainer( env, agent, params, run_name, render )
 
-        train_data_log.append( train_data )
-
-        # save the scores and plot them
-        for metric, data_dict in train_data.items():
-            print( metric, ":", data_dict )
-            folder_name = f"runs/{model_name}"
-            os.makedirs(folder_name, exist_ok=True)
-            with open(f"{folder_name}/training-{metric}-{run_name}.csv", "w") as f:
-                writer = csv.writer(f)
-                for label, data in data_dict.items():
-                    writer.writerow([label] + data)
-
-            # plot the scores
-            _fig = plot_scores( data_dict, window_size=10, label=metric )
-            folder_name = f"figs/{model_name}"
-            os.makedirs(folder_name, exist_ok=True)
-            file_name = f"{folder_name}/training-{metric}-{run_name}.png"
-            plt.title( metric )
-            plt.savefig( file_name, dpi=300 )
+        # Save the training data, and make some plots
+        save_and_plot_logs(train_data, model_name, run_name)
 
     plt.show()
+
+
+def save_and_plot_logs(train_data, model_name, run_name):
+    # save the scores and plot them
+    for metric, data_dict in train_data.items():
+        print( metric, ":", data_dict )
+        folder_name = f"runs/{model_name}"
+        os.makedirs(folder_name, exist_ok=True)
+        with open(f"{folder_name}/training-{metric}-{run_name}.csv", "w") as f:
+            writer = csv.writer(f)
+            for label, data in data_dict.items():
+                writer.writerow([label] + data)
+
+        # plot the scores
+        _fig = plot_scores( data_dict, window_size=10, label=metric )
+        folder_name = f"figs/{model_name}"
+        os.makedirs(folder_name, exist_ok=True)
+        file_name = f"{folder_name}/training-{metric}-{run_name}.png"
+        plt.title( metric )
+        plt.savefig( file_name, dpi=300 )
 
 
 if __name__ == '__main__':
