@@ -4,26 +4,17 @@ given run, and processes the returned values into advantage arrays.
 # pylint: disable=attribute-defined-outside-init
 from typing import Optional
 import numpy as np
+from regex import W
 import torch
 from torch import Tensor
 from scipy.signal import lfilter
 from params import Params
 
-def discount_cumsum(x, discount):
-    """
-    magic from rllab for computing discounted cumulative sums of vectors.
-    input:
-        vector x,
-        [x0,
-         x1,
-         x2]
-    output:
-        [x0 + discount * x1 + discount^2 * x2,
-         x1 + discount * x2,
-         x2]
-    """
-    x_reversed = np.array( x )[::-1]
-    return lfilter([1], [1, float(-discount)], x_reversed, axis=0)[::-1]
+def tensorify(array):
+    return torch.stack([torch.tensor(a) for a in array]).float()
+
+def numpify(array):
+    return np.array([np.array(a) for a in array], dtype=np.float32)
 
 class Memory:
     """ Memory class which saves data at every timestep for the given run.
@@ -84,70 +75,8 @@ class Memory:
 
         return True
 
-    def tensorify(self, array):
-        return torch.stack([torch.tensor(a) for a in array]).float().to(self.device)
-
-    def numpify(self, array):
-        return np.array([np.array(a) for a in array], dtype=np.float32)
-
-    def calculate_advantages(self,
-            start_index:Optional[int] = None,
-            end_index:Optional[int] = None,
-            last_value:Optional[Tensor] = 0,
-            last_cost_value:Optional[Tensor] =0
-        ):
-        """ Calculates advantages for reward and cost.
-        Partially copied from:
-        https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/buffer.py
-        """
-        start_index = self.done_indices[-2] if start_index is None else start_index
-        end_index   = self.done_indices[-1] if end_index is None   else end_index
-        if start_index == end_index:
-            return self
-
-        # extract necessary parameters
-        reward_decay = self.params.reward_decay
-        gae_lambda   = self.params.gae_lambda
-        cost_decay   = self.params.cost_decay
-        cost_lambda  = self.params.cost_lambda
-
-        rewards = self.rewards[ start_index:end_index ]
-        values  = self.values[ start_index:end_index ]
-        costs   = self.costs[ start_index:end_index ]
-        cost_values = self.cost_values[ start_index:end_index]
-
-        # Calculate for Values
-        rewards = self.tensorify([ *rewards, last_value ]).squeeze()
-        values  = self.tensorify([ *values, last_value ]).squeeze()
-        deltas  = rewards[:-1] + reward_decay * values[1:] - values[:-1]
-
-        # Calculate advantages.
-        ep_advantages = discount_cumsum(deltas, reward_decay*gae_lambda)
-        ep_returns    = discount_cumsum(rewards, reward_decay)[:-1]
-        # => advantages[0] == rewards[0] +       g   * values[1] -             values[0]
-        #      +  g   * l   * rewards[1] +  l  * g^2 * values[2] - g   * l   * values[1]
-        #      +  g^2 * l^2 * rewards[2] + l^2 * g^3 * values[2] - g^2 * l^2 * values[2]
-        #      + ...
-
-        # Calculate for costs/constraints
-        costs       = self.tensorify([ *costs, last_cost_value ]).squeeze()
-        cost_values = self.tensorify([ *cost_values, last_cost_value ]).squeeze()
-        cost_deltas = costs[:-1] + cost_decay * cost_values[1:] - cost_values[:-1]
-        ep_cost_advantages = discount_cumsum(cost_deltas, cost_decay*cost_lambda)
-        ep_cost_returns    = discount_cumsum(costs, cost_decay)[:-1]
-
-        # save results to memory
-        # pylint: disable=unexpected-keyword-arg
-        self.advantages      = \
-            np.concatenate( [self.advantages, ep_advantages], dtype=np.float32 )
-        self.returns         = \
-            np.concatenate( [self.returns, ep_returns], dtype=np.float32 )
-        self.cost_advantages = \
-            np.concatenate( [self.cost_advantages, ep_cost_advantages], dtype=np.float32 )
-        self.cost_returns    = \
-            np.concatenate( [self.cost_returns, ep_cost_returns], dtype=np.float32 )
-
-        return self
+    def calculate_advantages(self):
+        calculate_advantages(self)
 
     def normalize_advantages(self):
         # Use normalization / rescaling of the advantage values
@@ -157,7 +86,8 @@ class Memory:
             adv_mean = self.advantages.mean()
             adv_std  = self.advantages.std()
         self.advantages_scaling = (adv_std + eps)
-        self.advantages = (self.advantages - adv_mean) / self.advantages_scaling
+        self.advantages -= adv_mean
+        self.advantages /= self.advantages_scaling
 
 
         # Center, but do NOT rescale advantages for cost gradient
@@ -166,10 +96,10 @@ class Memory:
 
         self.advantages_calculated = True
 
-    def prepare(self, calculate_advantages=False):
-        if calculate_advantages:
-            self.calculate_advantages(start_index=self.done_indices[-1], end_index=len(self.dones))
-        self.normalize_advantages()
+    def prepare(self):
+        self.calculate_advantages()
+        if self.params.normalize_advantages:
+            self.normalize_advantages()
 
         # arrays that record data for each timestep
         self.curr_states = torch.stack(self.curr_states).to(self.device)
@@ -178,7 +108,7 @@ class Memory:
         self.actions = torch.stack(self.actions).to(self.device)
         self.logprobs = torch.stack(self.logprobs).to(self.device)
         self.action_means = torch.stack(self.action_means).to(self.device)
-        self.rewards = self.tensorify(self.rewards)
+        self.rewards = tensorify(self.rewards)
         self.values = torch.tensor(self.values).to(self.device)
         self.costs = torch.stack(self.costs).to(self.device)
         self.cost_values = torch.tensor(self.cost_values).to(self.device)
@@ -224,7 +154,7 @@ class Memory:
             self.done_indices.append(len(self.dones)-1)
             self.episode_costs.append(0)
             self.episode_rewards.append(0)
-            self.calculate_advantages()
+            # self.calculate_advantages()
 
         # List[dict]
         self.infos.append(info)
@@ -305,3 +235,134 @@ def map_and_flatten_state(state:torch.Tensor):
     state_flat = torch.tensor(state_flat).float()
 
     return state_flat, state_mapping
+
+# Calculate Advantages
+#########################################################################################
+# -> advantages[0] == rewards[0] +       g   * values[1] -             values[0]
+#      +  g   * l   * rewards[1] +  l  * g^2 * values[2] - g   * l   * values[1]
+#      +  g^2 * l^2 * rewards[2] + l^2 * g^3 * values[2] - g^2 * l^2 * values[2]
+#      + ...
+
+# -> returns[0]    == rewards[0] + g * rewards[1] + g^2 * rewards[2] + ...
+
+def calculate_advantages(memory):
+    """ Calculates advantages for reward and cost.
+    Partially copied from:
+    https://github.com/openai/safety-starter-agents/blob/master/safe_rl/pg/buffer.py
+    """
+    # extract necessary parameters
+    reward_decay = memory.params.reward_decay
+    gae_lambda   = memory.params.gae_lambda
+    cost_decay   = memory.params.cost_decay
+    cost_lambda  = memory.params.cost_lambda
+
+    # get arrays
+    rewards      = memory.rewards
+    values       = memory.values
+    costs        = memory.costs
+    cost_values  = memory.cost_values
+    dones        = memory.dones
+    done_indices = memory.done_indices
+
+    # Make sure arrays are in the correct format
+    rewards      = numpify( rewards ).squeeze()
+    values       = numpify( values ).squeeze()
+    costs        = numpify( costs ).squeeze()
+    cost_values  = numpify( cost_values ).squeeze()
+
+    # calculate advantages
+    advantage_method = "separate"
+
+    # advantage method used in safety-starter-agent
+    if advantage_method == "separate":
+        memory.advantages, memory.returns = calculate_advantages_separate(
+            done_indices, rewards, values, reward_decay, gae_lambda
+        )
+        memory.cost_advantages, memory.cost_returns = calculate_advantages_separate(
+            done_indices, costs, cost_values, cost_decay, cost_lambda
+        )
+
+    # advantage method used in reference PPO implementation I initially used
+    if advantage_method == "together":
+        memory.advantages, memory.returns = calculate_advantages_together(
+            rewards, values, dones, reward_decay, gae_lambda
+        )
+        memory.cost_advantages, memory.cost_returns = calculate_advantages_together(
+            costs, cost_values, dones, cost_decay, cost_lambda
+        )
+
+    return memory
+
+# Essentially the way advantages and returns are computed in safety-starter-agents
+def calculate_advantages_separate(_done_indices, _rewards, _values, _decay, _lambda):
+    done_indices = np.append(_done_indices, len(_rewards))
+    start_end = zip( done_indices[:-1], done_indices[1:] )
+
+    advantages = np.array([], dtype=np.float32)
+    returns    = np.array([], dtype=np.float32)
+
+    for (start_index, end_index) in start_end:
+        if start_index == end_index:
+            continue
+        rewards = np.append( _rewards[start_index:end_index], 0 )
+        values  = np.append(  _values[start_index:end_index], 0 )
+        deltas  = rewards[:-1] + _decay * values[1:] - values[:-1]
+        ep_adv = discount_cumsum(deltas, _decay*_lambda)
+        ep_ret = discount_cumsum(rewards, _decay)[:-1]
+
+        # pylint: disable=unexpected-keyword-arg
+        advantages = np.concatenate([ advantages, ep_adv ], dtype=np.float32)
+        returns    = np.concatenate([ returns,    ep_ret ], dtype=np.float32)
+
+    return advantages, returns
+
+# The way advantages are calculated in my previous implementation
+def calculate_advantages_together(rewards, values, dones, decay, _lambda):
+    cumulative_rewards = \
+        discount_cumsum_rewards( rewards, decay*_lambda )
+    cumulative_values  = \
+        discount_cumsum_values(  values, dones, decay, _lambda )
+
+    advantages = cumulative_rewards - cumulative_values
+
+    return advantages, cumulative_rewards
+
+def discount_cumsum(x, discount):
+    """
+    magic from rllab for computing discounted cumulative sums of vectors.
+    input:
+        vector x,
+        [x0,
+         x1,
+         x2]
+    output:
+        [x0 + discount * x1 + discount^2 * x2,
+         x1 + discount * x2,
+         x2]
+    """
+    x_reversed = np.array( x )[::-1]
+    return lfilter([1], [1, float(-discount)], x_reversed, axis=0)[::-1]
+
+def discount_cumsum_rewards( rewards, discount ):
+    cumulative_rewards = np.zeros(len(rewards), dtype=np.float32)
+    cumulative_rewards[-1] = rewards[-1]
+
+    for t in range( len(rewards)-2, -1, -1 ):
+        cumulative_rewards[t] += rewards[t]
+        cumulative_rewards[t] += discount * cumulative_rewards[t+1]
+
+    return cumulative_rewards
+
+def discount_cumsum_values( values, dones, decay, _lambda ):
+    # lim = params.cumulative_limit
+
+    cumulative_values = np.zeros(len(values), dtype=np.float32)
+    cumulative_values[-1] = values[-1]
+    for t in range( len(values)-2, -1, -1 ):
+        cumulative_values[t] += values[t]
+        cumulative_values[t] += (decay*_lambda) * cumulative_values[t+1]
+        # cumulative_values[t]  = np.median([ -lim, cumulative_values[t], lim ])
+        if not dones[t]:
+            cumulative_values[t] -= decay * values[t+1]
+
+    return cumulative_values

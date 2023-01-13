@@ -21,6 +21,7 @@ class Params:
             action_std_init:float = 0.6,
             kl_target:float = 0,
             cumulative_limit:float = float("inf"),
+            normalize_advantages:bool = True,
             normalization_epsilon:float = 1e-6,
 
             reward_penalized:bool = False,
@@ -73,6 +74,7 @@ class Params:
         self.action_std = action_std_init
         self.kl_target = kl_target
         self.cumulative_limit = cumulative_limit # TODO: reimplement
+        self.normalize_advantages = normalize_advantages
         self.normalization_epsilon = normalization_epsilon
 
         # cost advantage parameters

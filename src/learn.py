@@ -8,7 +8,7 @@ from agent_base import Agent
 
 def learn(agent: Agent):
     # prepare advantages and other tensors used for training
-    memory = agent.memory.prepare(calculate_advantages=True)
+    memory = agent.memory.prepare()
     losses = {}
 
     # initialize test variables
@@ -82,8 +82,8 @@ def learn_predictor(agent, memory, batches):
 # 2. Train Value Critic ( and Cost Critic )
 #########################################################################################
 def learn_critics(agent, memory, batches):
-    loss_fn = torch.nn.MSELoss()
-    #loss_fn = torch.nn.HuberLoss("mean")
+    #loss_fn = torch.nn.MSELoss()
+    loss_fn = torch.nn.HuberLoss("mean")
     value_critic_losses = []
     cost_critic_losses  = []
 
