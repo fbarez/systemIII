@@ -21,7 +21,7 @@ config = {
 
 def CreateWorld():
     #env = Engine(config)
-    env = gym.make('Safexp-CarGoal2-v0')
+    env = gym.make('Safexp-CarGoal1-v0')
 
     # ensure state is returned as a dict
     state = env.reset()

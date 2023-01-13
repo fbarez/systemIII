@@ -55,7 +55,6 @@ def trainer( env,
 
         # Step 3. Print some info about the training so far
         print_epoch_data(episode, run_data, train_run_data, losses)
-        episode += len( run_data["score"] ) - 1
 
         # Step 4. Save the model
         if params.save_period and timesteps % params.save_period == 0:
@@ -67,6 +66,8 @@ def trainer( env,
             for state in train_states:
                 writer.writerow(state)
 
+        # Step 6. Keep track of episode and clear states
+        episode += len( run_data["score"] ) - 1
         train_states = []
 
     print("Finished training")
@@ -110,7 +111,7 @@ def print_epoch_data(episode, run_data, train_run_data, losses):
     scores_mean = np.mean( scores[:-1] )
     scores_std  = np.std(  scores[:-1] )
     print(f'# Episodes {initial_episode}-{initial_episode+len(scores)-2}:')
-    print(f'{"%20s"%"Score"} = {"%.2f" % scores_mean} ± {"%.2f" % scores_std}')
+    print(f'{"%20s"%"score"} = {"%.2f" % scores_mean} ± {"%.2f" % scores_std}')
 
     losses = { k:round(float(v),3) for k,v in losses.items()}
     for k, v in losses.items():

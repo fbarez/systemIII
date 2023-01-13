@@ -2,7 +2,6 @@
 """
 
 from typing import Optional
-from collections import defaultdict
 import argparse
 import json
 import time
@@ -162,7 +161,7 @@ def main( game_mode: str,
 
         train_data_log.append( train_data )
 
-        # save the scores from this run
+        # save the scores and plot them
         for metric, data_dict in train_data.items():
             print( metric, ":", data_dict )
             folder_name = f"runs/{model_name}"
