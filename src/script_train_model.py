@@ -83,26 +83,20 @@ def main( game_mode: str,
     else:
         raise ValueError("game_mode must be 'car' or 'cartpole'")
 
-    # Choose the constraint calculation functions
+    # Choose the Agent
+    if agent_type == "s3":
+        ChosenAgentClass = S3Agent
+    elif agent_type == "ac":
+        ChosenAgentClass = ActorCriticAgent
+    else:
+        raise ValueError("Invalid agent type")
+
+    # override the constraint calculation functions
     # pylint: disable=missing-class-docstring
-    class S3AgentConstructor(S3Agent):
+    class AgentConstructor(ChosenAgentClass):
         def calculate_constraint( self, index: int,
                 state: torch.Tensor, memory: Optional[Memory] = None ):
             return calculate_constraint( self, index, state, memory )
-
-    # pylint: disable=missing-class-docstring
-    class ActorCriticAgentConstructor(ActorCriticAgent):
-        def calculate_constraint(self, index: int,
-                state: torch.Tensor, memory: Optional[Memory] = None ):
-            return calculate_constraint( self, index, state, memory )
-
-    # Choose the Agent
-    if agent_type == "s3":
-        agent_constructor = S3AgentConstructor
-    elif agent_type == "ac":
-        agent_constructor = ActorCriticAgentConstructor
-    else:
-        raise ValueError("Invalid agent type")
 
     # Initialise the world state
     curr_state, state_mapping = map_and_flatten_state( env.reset() )
@@ -163,7 +157,7 @@ def main( game_mode: str,
         run_name = f"{game_mode}-{agent_type}-{time_str}"
 
         # Initialize and Train the Model
-        agent = agent_constructor(params)
+        agent = AgentConstructor(params)
         train_data = trainer( env, agent, params, run_name, render )
 
         # Save the training data, and make some plots
