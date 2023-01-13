@@ -121,16 +121,20 @@ def main( game_mode: str,
         actions_continuous=actions_continuous,
         use_cuda=torch.cuda.is_available(),
         learning_rate=learning_rate,
+
         reward_decay=reward_decay,
         gae_lambda=gae_lambda,
+        normalize_advantages=True,
         clipped_advantage=True,
         policy_clip=0.2,
         action_std_init=0.4,
         kl_target=kl_target,
+
+        train_cost_critic=False,
         cost_decay=cost_decay,
         cost_lambda=cost_lambda,
-        train_cost_critic=False,
-        penalty_init=0.0001,
+        penalty_init=1.,
+
         checkpoint_dir=f"tmp/models/{game_mode}/{agent_type}/{model_name}",
         agent_type=agent_type,
         game_mode=game_mode,
@@ -143,7 +147,7 @@ def main( game_mode: str,
         test_iter=test_iter,
         timestep_length=timestep_length,
         save_period=save_period,
-        cumulative_limit=5,
+        cumulative_limit=None,
     )
     print("# Parameters:")
     print(json.dumps(params._json(), indent=4))
