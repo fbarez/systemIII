@@ -7,9 +7,9 @@ import warnings
 
 import torch
 import numpy as np
+from tqdm import tqdm
 from memory import Memory
 
-from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
 print("ignore...\n")
@@ -75,7 +75,6 @@ class Runner(object):
             curr_state = memory.flatten_state( self.env.reset() )
 
         state_data = []
-        print("# Rolling out agent in environment")
         for time in tqdm(range(num_iter)):
             # Get the next state
             with torch.no_grad():

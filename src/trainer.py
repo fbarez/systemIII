@@ -42,8 +42,8 @@ def trainer( env,
     run_data = None
 
     while timesteps < params.num_timesteps:
-        print("timesteps:", timesteps)
         # Step 1. n-step rollout
+        print("\n# Rolling out agent in environment. (current timesteps:", timesteps, ")")
         curr_state, run_data, state_data = runner.n_step_rollout( agent.choose_action,
             curr_state, params.num_iter, render=render, prev_run_data=run_data,
             training=True, current_time=timesteps )
@@ -51,6 +51,7 @@ def trainer( env,
         timesteps += params.num_iter
 
         # Step 2. Learn
+        print("# Training model...")
         losses = agent.learn()
 
         # Step 3. Print some info about the training so far

@@ -1,9 +1,7 @@
-from re import I
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as p
 import csv
-import re
 from collections import defaultdict
 import argparse
 from matplotlib.figure import Figure
@@ -15,9 +13,9 @@ if hasattr( sns, 'set_theme' ):
 
 # Hardcoded values
 plt.rcParams["figure.figsize"] = (9, 5)
-XMIN, XMAX = 0, 1e7
+XMIN, XMAX = 0, None
 LINE_WIDTH = 3
-EP_PER_EPOCH = 30
+EP_PER_EPOCH = 1
 
 def plot_scores(data,
         window_size: int = 10,
@@ -94,7 +92,9 @@ def plot_scores(data,
         ax.set_ylabel(f'Rolling Mean {label}')
     else:
         ax.set_ylabel(label)
-    plt.xlim(xmin=XMIN, xmax=XMAX)
+
+    if (not XMIN is None) and (not XMAX is None):
+        plt.xlim(xmin=XMIN, xmax=XMAX)
 
     if y:
         ax.plot(x, y, label='raw data', color='purple', alpha=0.1)
@@ -154,8 +154,9 @@ if __name__ == '__main__':
 
     # plot the mean of all data
     fig, ax = plt.subplots()
-    plt.hlines( args.compare_line, 0, 1e7, color='darkred',
-                linestyle='dashed', linewidth=LINE_WIDTH )
+    if not (XMIN is None or XMAX is None):
+        plt.hlines( args.compare_line, XMIN, XMAX, color='darkred',
+                    linestyle='dashed', linewidth=LINE_WIDTH )
 
     color_map = {
         "ppo":             "tab:green",
