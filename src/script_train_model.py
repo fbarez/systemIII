@@ -129,7 +129,7 @@ def main( game_mode: str,
         policy_clip=0.2,
         action_std_init=0.4,
         kl_target=kl_target,
-        entropy_regularization=0.01,
+        entropy_regularization=0.00,
 
         train_cost_critic=False,
         cost_decay=cost_decay,
