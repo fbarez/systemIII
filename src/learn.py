@@ -131,8 +131,10 @@ def learn_critics(agent, memory, batches):
 # 3. Train Actor
 #########################################################################################
 def learn_actor(agent, memory, batches):
+    entropy_regularization = agent.params.entropy_regularization
     kl_target_reached = False
     actor_losses = []
+    entropy_losses = []
 
     for batch in batches:
         curr_states     = memory.curr_states[batch]
@@ -191,9 +193,9 @@ def learn_actor(agent, memory, batches):
 
         # Optionally, calculate entropy loss term
         entropy_loss = 0
-        entropy_regularization = agent.params.entropy_regularization
         if entropy_regularization != 0:
-            entropy_loss = entropy_regularization * entropies.mean()
+            entropy_loss = - entropy_regularization * entropies.mean()
+            entropy_losses.append(entropy_loss.detach().cpu().numpy())
 
         total_loss = actor_loss + entropy_loss
 
@@ -202,8 +204,10 @@ def learn_actor(agent, memory, batches):
         total_loss.backward()
         agent.actor.optimizer.step()
 
-        actor_losses.append( total_loss.detach().cpu().numpy() )
+        actor_losses.append( actor_loss.detach().cpu().numpy() )
 
 
     losses = { "actor_loss": np.array(actor_losses).mean() }
+    if entropy_regularization != 0:
+        losses["entropy_loss"] = np.array(entropy_losses).mean()
     return losses, kl_target_reached, kl

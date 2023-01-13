@@ -34,7 +34,7 @@ class Params:
             penalty_init:float = 1.,
             penalty_lr:float = 5e-2,
             penalty_param_loss:bool = True,
-            entropy_regularization:float = 0.01,
+            entropy_regularization:float = 0.00,
 
             checkpoint_dir:str = "tmp/model",
             instance_name:str = "",
