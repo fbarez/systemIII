@@ -184,8 +184,15 @@ def main( game_mode: str,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--game_mode',  type=str, default='cartpole')
-    parser.add_argument('--agent_type', type=str, default='ac')
+    parser.description = "Train a RL model on a game mode."
+    parser.epilog = """
+    Example usage (train a System 3 model on the OpenAI Safety Gym CarGoal):
+    $ python ./script_train_model.py --game_mode car --agent_type s3
+    """
+    game_modes = ['car', 'cartpole']
+    agent_types = ['s3', 'ac']
+    parser.add_argument('--game_mode',  type=str, default='cartpole', choices=game_modes)
+    parser.add_argument('--agent_type', type=str, default='ac', choices=agent_types)
     parser.add_argument('--model_name', type=str, default='model')
     parser.add_argument('--render', action='store_true', default=False)
     parser.add_argument('-n', type=int, default=1)
