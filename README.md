@@ -1,6 +1,7 @@
 # Safety Gym Constraints
 
 ## Prerequisites:
+
 Must install OpenAI [safety-gym](https://github.com/openai/safety-gym) and dependencies.
 In particular, [mujoco-200](https://www.roboti.us/download.html) is the most difficult.
 
